@@ -1,0 +1,200 @@
+{
+  "entities": {
+    "order": {
+      "title": "Order",
+      "description": "Hospital medical supply order record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "codigo": { "type": "string", "maxLength": 64 },
+        "origem": { "type": "string", "maxLength": 32 },
+        "tipo": { "type": "string", "maxLength": 64 },
+        "solicitante": { "type": "string", "maxLength": 128 },
+        "cpf": { "type": "string", "maxLength": 32 },
+        "programa": { "type": "string", "maxLength": 128 },
+        "unidade": { "type": "string", "maxLength": 128 },
+        "quantidade_itens": { "type": "number" },
+        "criado_em": { "type": "string", "maxLength": 64 },
+        "status_origem": { "type": "string", "maxLength": 64 },
+        "status_operacional": { "type": "string", "maxLength": 64 },
+        "validador": { "type": "string", "maxLength": 128 },
+        "validada_em": { "type": "string", "maxLength": 64 },
+        "separador": { "type": "string", "maxLength": 128 },
+        "separado_em": { "type": "string", "maxLength": 64 },
+        "conferente": { "type": "string", "maxLength": 128 },
+        "conferido_em": { "type": "string", "maxLength": 64 },
+        "expedidor": { "type": "string", "maxLength": 128 },
+        "expedido_em": { "type": "string", "maxLength": 64 },
+        "entregador": { "type": "string", "maxLength": 128 },
+        "entregue_em": { "type": "string", "maxLength": 64 },
+        "historico_original": { "type": "string", "maxLength": 10000 },
+        "cronograma_id": { "type": "string", "maxLength": 128 },
+        "cronograma_vinculo": { "type": "string", "maxLength": 32 },
+        "data_inicio": { "type": "string", "maxLength": 64 },
+        "data_solicitacao": { "type": "string", "maxLength": 64 },
+        "data_aprovacao": { "type": "string", "maxLength": 64 },
+        "data_inicio_separacao": { "type": "string", "maxLength": 64 },
+        "data_expedicao": { "type": "string", "maxLength": 64 },
+        "data_prevista_entrega": { "type": "string", "maxLength": 64 },
+        "prioridade": { "type": "string", "maxLength": 32 },
+        "observacoes": { "type": "string", "maxLength": 2000 },
+        "importacao_id": { "type": "string", "maxLength": 128 },
+        "criado_no_sistema_em": { "type": "string", "maxLength": 64 },
+        "atualizado_em": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["codigo", "unidade", "programa", "status_operacional"]
+    },
+    "schedule": {
+      "title": "Schedule",
+      "description": "Logistics delivery schedule and deadlines for hospital units",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "nome": { "type": "string", "maxLength": 128 },
+        "competencia": { "type": "string", "maxLength": 32 },
+        "unidade": { "type": "string", "maxLength": 256 },
+        "programa": { "type": "string", "maxLength": 128 },
+        "tipo_pedido": { "type": "string", "maxLength": 64 },
+        "data_limite_solicitacao": { "type": "string", "maxLength": 64 },
+        "data_limite_aprovacao": { "type": "string", "maxLength": 64 },
+        "data_separacao": { "type": "string", "maxLength": 64 },
+        "data_expedicao": { "type": "string", "maxLength": 64 },
+        "data_entrega": { "type": "string", "maxLength": 64 },
+        "observacao": { "type": "string", "maxLength": 2000 },
+        "ativo": { "type": "boolean" }
+      },
+      "required": ["nome", "competencia", "unidade", "programa", "tipo_pedido", "ativo"]
+    },
+    "hospitalUnit": {
+      "title": "HospitalUnit",
+      "description": "Healthcare facility or hospital unit",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "sigla": { "type": "string", "maxLength": 32 },
+        "nome": { "type": "string", "maxLength": 256 },
+        "municipio": { "type": "string", "maxLength": 128 },
+        "descricao": { "type": "string", "maxLength": 512 },
+        "tipo": { "type": "string", "maxLength": 64 },
+        "ativa": { "type": "boolean" }
+      },
+      "required": ["sigla", "nome", "ativa"]
+    },
+    "program": {
+      "title": "Program",
+      "description": "Medical supply program (e.g. Almoxarifado, Hospitalar, Oncológico)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "nome": { "type": "string", "maxLength": 128 },
+        "descricao": { "type": "string", "maxLength": 512 },
+        "ativo": { "type": "boolean" }
+      },
+      "required": ["nome", "ativo"]
+    },
+    "requestTypeConfig": {
+      "title": "RequestTypeConfig",
+      "description": "Order modality / frequency configuration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "nome": { "type": "string", "maxLength": 64 },
+        "cor": { "type": "string", "maxLength": 32 },
+        "prioridade_padrao": { "type": "string", "maxLength": 32 },
+        "ativo": { "type": "boolean" }
+      },
+      "required": ["nome", "ativo"]
+    },
+    "importRecord": {
+      "title": "ImportRecord",
+      "description": "Log of spreadsheet import batch",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "arquivo": { "type": "string", "maxLength": 256 },
+        "data_importacao": { "type": "string", "maxLength": 64 },
+        "usuario": { "type": "string", "maxLength": 128 },
+        "quantidade_registros": { "type": "number" },
+        "novos": { "type": "number" },
+        "atualizados": { "type": "number" },
+        "sem_alteracao": { "type": "number" },
+        "erros": { "type": "number" }
+      },
+      "required": ["arquivo", "data_importacao", "usuario"]
+    },
+    "auditLog": {
+      "title": "AuditLog",
+      "description": "Audit trail log of changes to orders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "pedido_id": { "type": "string", "maxLength": 128 },
+        "codigo_pedido": { "type": "string", "maxLength": 64 },
+        "usuario": { "type": "string", "maxLength": 128 },
+        "data_hora": { "type": "string", "maxLength": 64 },
+        "campo_alterado": { "type": "string", "maxLength": 128 },
+        "valor_anterior": { "type": "string", "maxLength": 512 },
+        "novo_valor": { "type": "string", "maxLength": 512 }
+      },
+      "required": ["pedido_id", "codigo_pedido", "usuario", "data_hora", "campo_alterado"]
+    },
+    "systemSettings": {
+      "title": "SystemSettings",
+      "description": "Global system parameters",
+      "type": "object",
+      "properties": {
+        "horas_alerta_atencao": { "type": "number" },
+        "auto_vincular_cronograma": { "type": "boolean" },
+        "status_operacional_default_mapping": { "type": "object" }
+      },
+      "required": ["horas_alerta_atencao", "auto_vincular_cronograma"]
+    },
+    "testDoc": {
+      "title": "TestDoc",
+      "description": "Connectivity test document",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "maxLength": 32 },
+        "timestamp": { "type": "string", "maxLength": 64 }
+      }
+    }
+  },
+  "firestore": {
+    "/orders/{orderId}": {
+      "schema": "order",
+      "description": "Supply orders"
+    },
+    "/schedules/{scheduleId}": {
+      "schema": "schedule",
+      "description": "Delivery schedules"
+    },
+    "/hospital_units/{unitId}": {
+      "schema": "hospitalUnit",
+      "description": "Hospital and healthcare units"
+    },
+    "/programs/{programId}": {
+      "schema": "program",
+      "description": "Medical supply programs"
+    },
+    "/request_types/{typeId}": {
+      "schema": "requestTypeConfig",
+      "description": "Order types and configuration"
+    },
+    "/import_records/{importId}": {
+      "schema": "importRecord",
+      "description": "Spreadsheet import batch records"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "auditLog",
+      "description": "Audit trails for orders"
+    },
+    "/settings/{settingId}": {
+      "schema": "systemSettings",
+      "description": "System settings"
+    },
+    "/test/{docId}": {
+      "schema": "testDoc",
+      "description": "Health check documents"
+    }
+  }
+}

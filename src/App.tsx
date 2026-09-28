@@ -22,7 +22,10 @@ import {
   AlertCircle, 
   RotateCcw,
   Sparkles,
-  Zap
+  Zap,
+  Database,
+  RefreshCw,
+  CheckCircle2
 } from 'lucide-react';
 
 export default function App() {
@@ -31,8 +34,25 @@ export default function App() {
   const [isNewOrderOpen, setIsNewOrderOpen] = useState(false);
   const [ordersFilterPreset, setOrdersFilterPreset] = useState<{ status?: string; tipo?: string; unidade?: string } | undefined>(undefined);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  const { orders, resetToDefault } = useStore();
+  const { orders, reloadStrictFromBackend, dbStatus } = useStore();
+
+  const handleReloadFromBackend = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await reloadStrictFromBackend();
+      if (res.success) {
+        addToast('success', 'Backend Sincronizado', `${res.count} pedidos reais carregados estritamente do banco de dados.`);
+      } else {
+        addToast('error', 'Falha ao sincronizar', res.message || 'Verifique a conexão com o Supabase.');
+      }
+    } catch (err: any) {
+      addToast('error', 'Erro', err.message || 'Falha ao recarregar dados.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const addToast = (type: 'success' | 'error' | 'info', title: string, message?: string) => {
     const id = `t-${Date.now()}-${Math.random()}`;
@@ -124,6 +144,21 @@ export default function App() {
 
           {/* Actions */}
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleReloadFromBackend}
+              disabled={isSyncing}
+              title="Sincronizar e carregar dados diretamente do Supabase"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 transition-all cursor-pointer active:scale-95 shadow-2xs"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <Database className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden sm:inline">Supabase</span>
+              <span className="font-mono font-bold text-[11px] bg-emerald-200/60 px-1.5 py-0.2 rounded-full">
+                {orders.length}
+              </span>
+              <RefreshCw className={`w-3 h-3 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+            </button>
+
             {urgentCount > 0 && (
               <button
                 onClick={() => {
@@ -201,18 +236,14 @@ export default function App() {
       {/* Slender Footer */}
       <footer className="border-t border-slate-200/60 bg-white py-3 px-6 text-xs text-slate-400">
         <div className="max-w-6xl mx-auto flex items-center justify-between text-[11px]">
-          <span>SESAU Alagoas · Gestão Integrada de Abastecimento</span>
+          <span>SESAU Alagoas · Gestão Integrada de Abastecimento · Banco de Dados Conectado</span>
           <button
-            onClick={() => {
-              if (confirm('Deseja restaurar os 631 pedidos de demonstração originais?')) {
-                resetToDefault();
-                window.location.reload();
-              }
-            }}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-slate-600 transition-colors font-medium cursor-pointer"
+            onClick={handleReloadFromBackend}
+            disabled={isSyncing}
+            className="flex items-center gap-1.5 text-slate-500 hover:text-blue-600 transition-colors font-medium cursor-pointer"
           >
-            <RotateCcw className="w-3 h-3" />
-            <span>Restaurar Base (631 Pedidos)</span>
+            <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>Sincronizar com Backend ({orders.length} pedidos no Supabase)</span>
           </button>
         </div>
       </footer>

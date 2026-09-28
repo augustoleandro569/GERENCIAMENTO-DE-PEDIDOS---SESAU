@@ -16,21 +16,21 @@ import {
   INITIAL_PROGRAMS,
   INITIAL_TYPES,
   INITIAL_SCHEDULES,
-  generateSeedOrders
 } from './mockData';
 import { parseHistoryToEvents } from '../utils/historyParser';
 import { ImportAnalysis } from '../utils/spreadsheet';
+import { dbSync } from './dbSync';
 
 const STORAGE_KEYS = {
-  ORDERS: 'gp_orders_v1',
-  SCHEDULES: 'gp_schedules_v1',
-  UNITS: 'gp_units_v1',
-  PROGRAMS: 'gp_programs_v1',
-  TYPES: 'gp_types_v1',
-  IMPORTS: 'gp_imports_v1',
-  AUDIT: 'gp_audit_v1',
-  USER: 'gp_user_v1',
-  SETTINGS: 'gp_settings_v1',
+  ORDERS: 'gp_orders_backend_v2',
+  SCHEDULES: 'gp_schedules_backend_v2',
+  UNITS: 'gp_units_backend_v2',
+  PROGRAMS: 'gp_programs_backend_v2',
+  TYPES: 'gp_types_backend_v2',
+  IMPORTS: 'gp_imports_backend_v2',
+  AUDIT: 'gp_audit_backend_v2',
+  USER: 'gp_user_v2',
+  SETTINGS: 'gp_settings_v2',
 };
 
 const DEFAULT_USER: UserProfile = {
@@ -67,70 +67,186 @@ class AppStore {
   private orders: Order[] = [];
   private schedules: Schedule[] = [];
   private units: HospitalUnit[] = [];
-  private programs: Program[] = [];
-  private orderTypes: RequestTypeConfig[] = [];
+  private programs: Program[] = INITIAL_PROGRAMS;
+  private orderTypes: RequestTypeConfig[] = INITIAL_TYPES;
   private importRecords: ImportRecord[] = [];
   private auditLogs: AuditLog[] = [];
   private currentUser: UserProfile = DEFAULT_USER;
   private settings: SystemSettings = DEFAULT_SETTINGS;
   private listeners: Set<Listener> = new Set();
+  private isLoadedFromBackend = false;
 
   constructor() {
     this.init();
   }
 
   private init() {
+    // 1. Purge legacy mock data from old versions to ensure strict backend alignment
+    try {
+      localStorage.removeItem('gp_orders_v1');
+      localStorage.removeItem('gp_imports_v1');
+      localStorage.removeItem('gp_schedules_v1');
+      localStorage.removeItem('gp_units_v1');
+    } catch {
+      // Ignore
+    }
+
+    // 2. Load cached records if available
     try {
       const storedOrders = localStorage.getItem(STORAGE_KEYS.ORDERS);
       if (storedOrders) {
         this.orders = JSON.parse(storedOrders);
-      } else {
-        this.orders = generateSeedOrders();
-        this.save(STORAGE_KEYS.ORDERS, this.orders);
       }
 
       const storedSchedules = localStorage.getItem(STORAGE_KEYS.SCHEDULES);
-      this.schedules = storedSchedules ? JSON.parse(storedSchedules) : INITIAL_SCHEDULES;
+      if (storedSchedules) {
+        this.schedules = JSON.parse(storedSchedules);
+      }
 
       const storedUnits = localStorage.getItem(STORAGE_KEYS.UNITS);
-      this.units = storedUnits ? JSON.parse(storedUnits) : INITIAL_UNITS;
-
-      const storedPrograms = localStorage.getItem(STORAGE_KEYS.PROGRAMS);
-      this.programs = storedPrograms ? JSON.parse(storedPrograms) : INITIAL_PROGRAMS;
-
-      const storedTypes = localStorage.getItem(STORAGE_KEYS.TYPES);
-      this.orderTypes = storedTypes ? JSON.parse(storedTypes) : INITIAL_TYPES;
+      if (storedUnits) {
+        this.units = JSON.parse(storedUnits);
+      }
 
       const storedImports = localStorage.getItem(STORAGE_KEYS.IMPORTS);
-      this.importRecords = storedImports ? JSON.parse(storedImports) : [
-        {
-          id: 'imp-seed-1',
-          arquivo: 'relatorio-solicitacoes-setembro.xlsx',
-          data_importacao: '2026-09-24T08:00:00Z',
-          usuario: 'Rodrigo Cesar (Carga Inicial)',
-          quantidade_registros: 631,
-          novos: 631,
-          atualizados: 0,
-          sem_alteracao: 0,
-          erros: 0,
-        }
-      ];
+      if (storedImports) {
+        this.importRecords = JSON.parse(storedImports);
+      }
 
       const storedAudit = localStorage.getItem(STORAGE_KEYS.AUDIT);
-      this.auditLogs = storedAudit ? JSON.parse(storedAudit) : [];
+      if (storedAudit) {
+        this.auditLogs = JSON.parse(storedAudit);
+      }
 
       const storedUser = localStorage.getItem(STORAGE_KEYS.USER);
-      this.currentUser = storedUser ? JSON.parse(storedUser) : DEFAULT_USER;
+      if (storedUser) {
+        this.currentUser = JSON.parse(storedUser);
+      }
 
       const storedSettings = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-      this.settings = storedSettings ? JSON.parse(storedSettings) : DEFAULT_SETTINGS;
+      if (storedSettings) {
+        this.settings = JSON.parse(storedSettings);
+      }
     } catch (err) {
-      console.error('Failed to initialize storage, falling back to mock data:', err);
-      this.orders = generateSeedOrders();
-      this.schedules = INITIAL_SCHEDULES;
-      this.units = INITIAL_UNITS;
-      this.programs = INITIAL_PROGRAMS;
-      this.orderTypes = INITIAL_TYPES;
+      console.warn('Cache read warning:', err);
+    }
+
+    // 3. Setup real-time listener handlers
+    dbSync.setChangeListeners(
+      (payload) => this.handleRemoteOrderPayload(payload),
+      (payload) => this.handleRemoteSchedulePayload(payload)
+    );
+
+    // 4. Immediately trigger strict backend fetch (Supabase)
+    setTimeout(() => {
+      this.loadBackendData();
+    }, 20);
+
+    // 5. Also listen to Firestore fallback
+    setTimeout(() => {
+      dbSync.initFirestore(
+        (remoteOrders) => {
+          if (!this.isLoadedFromBackend && remoteOrders && remoteOrders.length > 0) {
+            this.orders = remoteOrders;
+            this.save(STORAGE_KEYS.ORDERS, this.orders);
+            this.notify();
+          }
+        },
+        (remoteSchedules) => {
+          if (this.schedules.length === 0 && remoteSchedules && remoteSchedules.length > 0) {
+            this.schedules = remoteSchedules;
+            this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+            this.notify();
+          }
+        },
+        (remoteUnits) => {
+          if (this.units.length === 0 && remoteUnits && remoteUnits.length > 0) {
+            this.units = remoteUnits;
+            this.save(STORAGE_KEYS.UNITS, this.units);
+            this.notify();
+          }
+        }
+      );
+    }, 150);
+  }
+
+  // Load 100% real records directly from the database backend
+  public async loadBackendData(): Promise<{ success: boolean; count: number; message?: string }> {
+    try {
+      const res = await dbSync.syncStrictFromSupabase();
+      if (res.success) {
+        this.isLoadedFromBackend = true;
+        // Strictly use backend data. Drop any uncommitted/mock rows!
+        this.orders = res.orders;
+        if (res.schedules.length > 0) {
+          this.schedules = res.schedules;
+        }
+        if (res.units.length > 0) {
+          this.units = res.units;
+        }
+
+        // Cache the verified backend dataset
+        this.save(STORAGE_KEYS.ORDERS, this.orders);
+        this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+        this.save(STORAGE_KEYS.UNITS, this.units);
+
+        this.notify();
+        return { success: true, count: this.orders.length };
+      }
+      return { success: false, count: this.orders.length, message: res.message };
+    } catch (err: any) {
+      console.error('Failed to load backend data:', err);
+      return { success: false, count: this.orders.length, message: err.message || String(err) };
+    }
+  }
+
+  // Handle live Postgres changes from Supabase
+  private handleRemoteOrderPayload(payload: any) {
+    if (!payload || !payload.eventType) return;
+    const { eventType, new: newRecord, old: oldRecord } = payload;
+
+    if (eventType === 'INSERT' && newRecord) {
+      const exists = this.orders.some(o => o.id === newRecord.id);
+      if (!exists) {
+        this.orders.unshift(newRecord as Order);
+        this.save(STORAGE_KEYS.ORDERS, this.orders);
+        this.notify();
+      }
+    } else if (eventType === 'UPDATE' && newRecord) {
+      const idx = this.orders.findIndex(o => o.id === newRecord.id);
+      if (idx !== -1) {
+        this.orders[idx] = { ...this.orders[idx], ...(newRecord as Order) };
+        this.save(STORAGE_KEYS.ORDERS, this.orders);
+        this.notify();
+      }
+    } else if (eventType === 'DELETE' && oldRecord) {
+      this.orders = this.orders.filter(o => o.id !== oldRecord.id);
+      this.save(STORAGE_KEYS.ORDERS, this.orders);
+      this.notify();
+    }
+  }
+
+  private handleRemoteSchedulePayload(payload: any) {
+    if (!payload || !payload.eventType) return;
+    const { eventType, new: newRecord, old: oldRecord } = payload;
+
+    if (eventType === 'INSERT' && newRecord) {
+      if (!this.schedules.some(s => s.id === newRecord.id)) {
+        this.schedules.push(newRecord as Schedule);
+        this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+        this.notify();
+      }
+    } else if (eventType === 'UPDATE' && newRecord) {
+      const idx = this.schedules.findIndex(s => s.id === newRecord.id);
+      if (idx !== -1) {
+        this.schedules[idx] = { ...this.schedules[idx], ...(newRecord as Schedule) };
+        this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+        this.notify();
+      }
+    } else if (eventType === 'DELETE' && oldRecord) {
+      this.schedules = this.schedules.filter(s => s.id !== oldRecord.id);
+      this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+      this.notify();
     }
   }
 
@@ -138,7 +254,7 @@ class AppStore {
     try {
       localStorage.setItem(key, JSON.stringify(data));
     } catch (e) {
-      console.warn('Storage save failed (quota or disabled):', e);
+      console.warn('Storage save note:', e);
     }
   }
 
@@ -177,127 +293,178 @@ class AppStore {
   // Match schedule automatically (supports multi-unit schedules)
   public findMatchingSchedule(unit: string, program: string, tipo: string): Schedule | undefined {
     const unitUpper = (unit || '').toUpperCase().trim();
+    const progUpper = (program || '').toUpperCase().trim();
+    const tipoUpper = (tipo || '').toUpperCase().trim();
+
     return this.schedules.find(s => {
       if (!s.ativo) return false;
-      const primaryMatches = s.unidade && s.unidade.toUpperCase().trim() === unitUpper;
-      const arrayMatches = s.unidades && s.unidades.some(u => u.toUpperCase().trim() === unitUpper);
-      const csvMatches = s.unidade && s.unidade.split(',').map(x => x.trim().toUpperCase()).includes(unitUpper);
-      const unitMatches = primaryMatches || arrayMatches || csvMatches;
-      return (
-        unitMatches &&
-        s.programa.toUpperCase() === program.toUpperCase() &&
-        s.tipo_pedido.toUpperCase() === tipo.toUpperCase()
-      );
+      const sUnit = (s.unidade || '').toUpperCase().trim();
+      const sProg = (s.programa || '').toUpperCase().trim();
+      const sTipo = (s.tipo_pedido || '').toUpperCase().trim();
+
+      const unitMatches = sUnit === 'TODAS' || sUnit === 'TODOS' || sUnit === unitUpper || sUnit.split(/[,;\s]+/).includes(unitUpper);
+      const progMatches = sProg === progUpper;
+      const tipoMatches = sTipo === tipoUpper;
+
+      return unitMatches && progMatches && tipoMatches;
     });
   }
 
-  // Add Order manually
-  public addOrder(orderData: Omit<Order, 'id' | 'criado_no_sistema_em' | 'atualizado_em' | 'eventos'>, user: UserProfile): Order {
-    const id = `ord-${Date.now()}`;
+  // Add new order
+  public addOrder(
+    orderData: Omit<Order, 'id' | 'codigo' | 'criado_no_sistema_em' | 'atualizado_em' | 'eventos'> & { codigo?: string },
+    responsavel?: string | UserProfile
+  ): Order {
     const now = new Date().toISOString();
+    const dateFormatted = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    const userNome = typeof responsavel === 'object' && responsavel !== null ? responsavel.nome : (responsavel || this.currentUser.nome);
 
-    // Check automatic schedule linking
-    let cronograma_id = orderData.cronograma_id;
-    let cronograma_vinculo = orderData.cronograma_vinculo || 'NENHUM';
+    let code = orderData.codigo;
+    if (!code) {
+      const maxExisting = this.orders.reduce((max, o) => {
+        const match = o.codigo.match(/SOL-\d{4}-(\d+)/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          return num > max ? num : max;
+        }
+        return max;
+      }, 3074);
+      code = `SOL-2026-${String(maxExisting + 1).padStart(5, '0')}`;
+    }
 
-    if (!cronograma_id && this.settings.auto_vincular_cronograma) {
-      const match = this.findMatchingSchedule(orderData.unidade, orderData.programa, orderData.tipo);
-      if (match) {
-        cronograma_id = match.id;
-        cronograma_vinculo = 'AUTOMÁTICO';
+    const orderId = `ord-${Date.now()}`;
+    const initialEvent: OrderEvent = {
+      id: `evt-${orderId}-1`,
+      pedido_id: orderId,
+      tipo_evento: 'Criação do Pedido',
+      status: orderData.status_operacional || 'Aguardando Aprovação',
+      data_evento: dateFormatted,
+      responsavel: orderData.solicitante || userNome,
+      origem: 'MANUAL',
+      observacao: orderData.observacoes,
+    };
+
+    let cronogramaId = orderData.cronograma_id;
+    let cronogramaVinculo = orderData.cronograma_vinculo || 'NENHUM';
+    let dataPrevistaEntrega = orderData.data_prevista_entrega;
+
+    if (!cronogramaId && this.settings.auto_vincular_cronograma) {
+      const matchedSchedule = this.findMatchingSchedule(orderData.unidade, orderData.programa, orderData.tipo);
+      if (matchedSchedule) {
+        cronogramaId = matchedSchedule.id;
+        cronogramaVinculo = 'AUTOMÁTICO';
+        if (!dataPrevistaEntrega && matchedSchedule.data_entrega) {
+          dataPrevistaEntrega = matchedSchedule.data_entrega;
+        }
       }
     }
 
-    const events: OrderEvent[] = [
-      {
-        id: `evt-${id}-1`,
-        pedido_id: id,
-        tipo_evento: 'Criação Manual',
-        status: orderData.status_operacional,
-        data_evento: now,
-        responsavel: user.nome,
-        origem: 'MANUAL',
-        observacao: 'Pedido cadastrado manualmente no sistema',
-      }
-    ];
-
     const newOrder: Order = {
       ...orderData,
-      id,
-      cronograma_id,
-      cronograma_vinculo,
-      origem: 'MANUAL',
+      id: orderId,
+      codigo: code,
+      cronograma_id: cronogramaId,
+      cronograma_vinculo: cronogramaVinculo,
+      data_prevista_entrega: dataPrevistaEntrega,
+      eventos: [initialEvent],
+      historico_original: `${dateFormatted} – Criada por ${orderData.solicitante || userNome}`,
       criado_no_sistema_em: now,
       atualizado_em: now,
-      eventos: events,
-      historico_original: `${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} – Criada por ${user.nome}`,
     };
 
     this.orders.unshift(newOrder);
     this.save(STORAGE_KEYS.ORDERS, this.orders);
+    dbSync.saveOrder(newOrder);
 
     this.addAuditLog({
-      pedido_id: id,
+      pedido_id: newOrder.id,
       codigo_pedido: newOrder.codigo,
-      usuario: user.nome,
+      usuario: userNome,
       data_hora: now,
-      campo_alterado: 'Criação de Pedido',
-      valor_anterior: '—',
-      novo_valor: `Status: ${newOrder.status_operacional} | Itens: ${newOrder.quantidade_itens}`,
+      campo_alterado: 'Criação',
+      valor_anterior: 'Nenhum',
+      novo_valor: `Pedido criado com status ${newOrder.status_operacional}`,
     });
 
     this.notify();
     return newOrder;
   }
 
-  // Update operational status with audit log
-  public updateOperationalStatus(id: string, newStatus: OrderStatus, user: UserProfile, note?: string) {
-    const orderIndex = this.orders.findIndex(o => o.id === id);
-    if (orderIndex === -1) return;
+  // Quick 1-click update for operational status
+  public updateOperationalStatus(
+    orderId: string,
+    newStatus: OrderStatus,
+    responsavel?: string | UserProfile,
+    observacao?: string
+  ): boolean {
+    const orderIndex = this.orders.findIndex(o => o.id === orderId);
+    if (orderIndex === -1) return false;
 
     const current = this.orders[orderIndex];
-    if (current.status_operacional === newStatus && !note) return;
+    const previousStatus = current.status_operacional;
+    if (previousStatus === newStatus) return true;
 
-    const oldStatus = current.status_operacional;
     const now = new Date().toISOString();
+    const dateFormatted = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    const user = typeof responsavel === 'object' && responsavel !== null ? responsavel.nome : (responsavel || this.currentUser.nome);
 
-    const newEvent: OrderEvent = {
-      id: `evt-${id}-${Date.now()}`,
-      pedido_id: id,
-      tipo_evento: `Status Operacional: ${newStatus}`,
-      status: newStatus,
-      data_evento: now,
-      responsavel: user.nome,
-      origem: 'MANUAL',
-      observacao: note || undefined,
-    };
-
-    const updatedEvents = [...(current.eventos || []), newEvent];
-
-    // Specific date fields based on operational progress
     const updates: Partial<Order> = {
       status_operacional: newStatus,
       atualizado_em: now,
-      eventos: updatedEvents,
     };
 
-    if (newStatus === 'Aprovada' && !current.validador) {
-      updates.validador = user.nome;
-      updates.validado_em = now;
-    } else if (newStatus === 'Em Separação' && !current.separador) {
-      updates.separador = user.nome;
-      updates.separado_em = now;
-    } else if (newStatus === 'Em Conferência' && !current.conferente) {
-      updates.conferente = user.nome;
-      updates.conferido_em = now;
-    } else if (newStatus === 'Expedida' && !current.expedidor) {
-      updates.expedidor = user.nome;
-      updates.expedido_em = now;
-    } else if (newStatus === 'Em Transporte' && !current.entregador) {
-      updates.entregador = user.nome;
-    } else if (newStatus === 'Entregue' && !current.entregue_em) {
-      updates.entregue_em = now;
+    let eventType = `Alteração para ${newStatus}`;
+
+    if (newStatus === 'Aguardando Separação' || newStatus === 'Aprovada') {
+      eventType = 'Aprovação';
+      updates.validador = user;
+      updates.validada_em = dateFormatted;
+      if (!current.data_aprovacao) updates.data_aprovacao = new Date().toISOString().split('T')[0];
+    } else if (newStatus === 'Em Separação') {
+      eventType = 'Separação Iniciada';
+      updates.separador = user;
+      updates.separado_em = dateFormatted;
+      if (!current.data_inicio_separacao) updates.data_inicio_separacao = new Date().toISOString().split('T')[0];
+    } else if (newStatus === 'Aguardando Conferência') {
+      eventType = 'Separação Concluída';
+      if (!current.separador) updates.separador = user;
+      if (!current.separado_em) updates.separado_em = dateFormatted;
+    } else if (newStatus === 'Em Conferência') {
+      eventType = 'Conferência Iniciada';
+      updates.conferente = user;
+      updates.conferido_em = dateFormatted;
+    } else if (newStatus === 'Expedida') {
+      eventType = 'Expedição';
+      updates.expedidor = user;
+      updates.expedido_em = dateFormatted;
+      if (!current.data_expedicao) updates.data_expedicao = new Date().toISOString().split('T')[0];
+    } else if (newStatus === 'Em Transporte') {
+      eventType = 'Saída para Entrega';
+      updates.entregador = user;
+    } else if (newStatus === 'Entregue' || newStatus === 'Entregue Parcialmente') {
+      eventType = newStatus === 'Entregue' ? 'Entrega Realizada' : 'Entrega Parcial';
+      updates.entregador = user;
+      updates.entregue_em = dateFormatted;
     }
+
+    const newEvent: OrderEvent = {
+      id: `evt-${orderId}-${Date.now()}`,
+      pedido_id: orderId,
+      tipo_evento: eventType,
+      status: newStatus,
+      data_evento: dateFormatted,
+      responsavel: user,
+      origem: 'SISTEMA',
+      observacao: observacao,
+    };
+
+    const currentEvents = current.eventos || [];
+    updates.eventos = [...currentEvents, newEvent];
+
+    const histLine = `${dateFormatted} – ${newStatus} por ${user}${observacao ? ` (${observacao})` : ''}`;
+    updates.historico_original = current.historico_original
+      ? `${current.historico_original}\n${histLine}`
+      : histLine;
 
     this.orders[orderIndex] = {
       ...current,
@@ -305,43 +472,35 @@ class AppStore {
     };
 
     this.save(STORAGE_KEYS.ORDERS, this.orders);
+    dbSync.saveOrder(this.orders[orderIndex]);
 
     this.addAuditLog({
-      pedido_id: id,
+      pedido_id: orderId,
       codigo_pedido: current.codigo,
-      usuario: user.nome,
+      usuario: user,
       data_hora: now,
       campo_alterado: 'Status Operacional',
-      valor_anterior: oldStatus,
-      novo_valor: newStatus + (note ? ` (Obs: ${note})` : ''),
+      valor_anterior: previousStatus,
+      novo_valor: newStatus,
     });
 
     this.notify();
+    return true;
   }
 
-  // Update any field on order
-  public updateOrder(id: string, partial: Partial<Order>, user: UserProfile, reason?: string) {
-    const idx = this.orders.findIndex(o => o.id === id);
+  // Update order fields
+  public updateOrder(
+    orderId: string,
+    partial: Partial<Order>,
+    responsavel?: string | UserProfile,
+    observacao?: string
+  ) {
+    const idx = this.orders.findIndex(o => o.id === orderId);
     if (idx === -1) return;
 
     const current = this.orders[idx];
     const now = new Date().toISOString();
-
-    // Log key changes to audit
-    Object.keys(partial).forEach(k => {
-      const key = k as keyof Order;
-      if (key !== 'atualizado_em' && key !== 'eventos' && current[key] !== partial[key]) {
-        this.addAuditLog({
-          pedido_id: id,
-          codigo_pedido: current.codigo,
-          usuario: user.nome,
-          data_hora: now,
-          campo_alterado: String(key),
-          valor_anterior: String(current[key] ?? '—'),
-          novo_valor: String(partial[key] ?? '—'),
-        });
-      }
-    });
+    const user = typeof responsavel === 'object' && responsavel !== null ? responsavel.nome : (responsavel || this.currentUser.nome);
 
     this.orders[idx] = {
       ...current,
@@ -349,16 +508,28 @@ class AppStore {
       atualizado_em: now,
     };
 
+    if (observacao) {
+      this.addAuditLog({
+        pedido_id: orderId,
+        codigo_pedido: current.codigo,
+        usuario: user,
+        data_hora: now,
+        campo_alterado: 'Atualização de Dados',
+        valor_anterior: 'Registro Anterior',
+        novo_valor: observacao,
+      });
+    }
+
     this.save(STORAGE_KEYS.ORDERS, this.orders);
+    dbSync.saveOrder(this.orders[idx]);
     this.notify();
   }
 
   // Process Import idempotently
-  public processImport(analysis: ImportAnalysis, user: UserProfile): ImportRecord {
+  public processImport(analysis: ImportAnalysis, responsavel?: string | UserProfile): ImportRecord {
     const now = new Date().toISOString();
     const importId = `imp-${Date.now()}`;
-    const existingMap = new Map<string, Order>();
-    this.orders.forEach(o => existingMap.set(o.codigo.toUpperCase().trim(), o));
+    const userNome = typeof responsavel === 'object' && responsavel !== null ? responsavel.nome : (responsavel || this.currentUser.nome);
 
     let newCount = 0;
     let updateCount = 0;
@@ -366,46 +537,33 @@ class AppStore {
     let errorCount = 0;
 
     for (const item of analysis.items) {
-      if (item.action === 'ERRO') {
+      if (item.action === 'ERRO' || !item.row) {
         errorCount++;
         continue;
       }
 
       const row = item.row;
-      const codeKey = row.codigo.toUpperCase().trim();
-      const existing = existingMap.get(codeKey);
 
-      // Check if unit needs auto-registration
-      const existingUnit = this.units.find(u => u.sigla.toUpperCase() === row.unidade.toUpperCase() || u.nome.toUpperCase() === row.unidade.toUpperCase());
-      if (!existingUnit && row.unidade) {
-        this.units.push({
-          id: `u-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          sigla: row.unidade.toUpperCase().slice(0, 10),
-          nome: row.unidade,
-          municipio: 'Alagoas',
-          tipo: 'Hospital',
-          ativa: true,
-        });
-        this.save(STORAGE_KEYS.UNITS, this.units);
-      }
+      if (item.action === 'NOVO') {
+        newCount++;
+        const orderId = `ord-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        const parsedEvents = parseHistoryToEvents(orderId, row.historico, row.solicitante);
 
-      if (!existing) {
-        // CREATE NEW ORDER
-        const id = `ord-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-        
-        let cronograma_id: string | null = null;
-        let cronograma_vinculo: 'AUTOMÁTICO' | 'MANUAL' | 'NENHUM' = 'NENHUM';
-        const match = this.findMatchingSchedule(row.unidade, row.programa, row.tipo);
-        if (match) {
-          cronograma_id = match.id;
-          cronograma_vinculo = 'AUTOMÁTICO';
+        let cronogramaId = undefined;
+        let cronogramaVinculo: 'AUTOMÁTICO' | 'MANUAL' | 'NENHUM' = 'NENHUM';
+        let dataPrevista = undefined;
+
+        if (this.settings.auto_vincular_cronograma) {
+          const match = this.findMatchingSchedule(row.unidade, row.programa, row.tipo);
+          if (match) {
+            cronogramaId = match.id;
+            cronogramaVinculo = 'AUTOMÁTICO';
+            dataPrevista = match.data_entrega;
+          }
         }
 
-        const initialOperationalStatus = (this.settings.status_operacional_default_mapping[row.status] || row.status) as OrderStatus;
-        const events = parseHistoryToEvents(id, row.historico, row.solicitante);
-
         const newOrder: Order = {
-          id,
+          id: orderId,
           codigo: row.codigo,
           origem: 'IMPORTAÇÃO',
           tipo: row.tipo,
@@ -414,55 +572,50 @@ class AppStore {
           programa: row.programa,
           unidade: row.unidade,
           quantidade_itens: row.itens,
-          criado_em: row.criada_em,
-          status_origem: row.status as OrderStatus,
-          status_operacional: initialOperationalStatus,
+          criado_em: row.criada_em || row.data_solicitacao || '',
+          data_inicio: row.data_solicitacao,
+          data_solicitacao: row.data_solicitacao,
+          data_aprovacao: row.data_aprovacao,
+          data_inicio_separacao: row.data_inicio_separacao,
+          data_expedicao: row.data_expedicao,
+          data_prevista_entrega: dataPrevista,
+          status_origem: (row.status as OrderStatus) || 'Aguardando Aprovação',
+          status_operacional: (row.status as OrderStatus) || 'Aguardando Aprovação',
           validador: row.validador,
           validada_em: row.validada_em,
           separador: row.separador,
           separado_em: row.separada_em,
           entregador: row.entregador,
           entregue_em: row.entregue_em,
+          cronograma_id: cronogramaId,
+          cronograma_vinculo: cronogramaVinculo,
+          prioridade: 'Normal',
           historico_original: row.historico || '',
-          eventos: events,
-          cronograma_id,
-          cronograma_vinculo,
-          prioridade: row.tipo === 'Emergencial' ? 'Urgente' : row.tipo === 'Falta' ? 'Alta' : 'Normal',
           importacao_id: importId,
           criado_no_sistema_em: now,
           atualizado_em: now,
+          eventos: parsedEvents,
         };
 
         this.orders.unshift(newOrder);
-        existingMap.set(codeKey, newOrder);
-        newCount++;
+      } else if (item.action === 'ATUALIZAR') {
+        const current = this.orders.find(o => o.codigo === row.codigo);
+        if (!current) continue;
 
-        this.addAuditLog({
-          pedido_id: id,
-          codigo_pedido: newOrder.codigo,
-          usuario: user.nome,
-          data_hora: now,
-          campo_alterado: 'Importação (Novo Registro)',
-          valor_anterior: '—',
-          novo_valor: `Importado de ${analysis.fileName} | Status Origem: ${newOrder.status_origem}`,
-        });
-      } else {
-        // UPDATE EXISTING ORDER
-        // Important: Update status_origem and data from file, but DO NOT overwrite manual operational status!
         let hasChanged = false;
-        const current = existing;
 
         if (current.status_origem !== row.status) {
           this.addAuditLog({
             pedido_id: current.id,
             codigo_pedido: current.codigo,
-            usuario: user.nome,
+            usuario: `Importação (${userNome})`,
             data_hora: now,
-            campo_alterado: 'Status Origem (Atualização Importação)',
+            campo_alterado: 'Status via Planilha',
             valor_anterior: current.status_origem,
             novo_valor: row.status,
           });
-          current.status_origem = row.status as OrderStatus;
+          current.status_origem = (row.status as OrderStatus);
+          current.status_operacional = (row.status as OrderStatus);
           hasChanged = true;
         }
 
@@ -491,7 +644,6 @@ class AppStore {
 
         if (row.historico && row.historico !== current.historico_original) {
           current.historico_original = row.historico;
-          // Add newly parsed events without erasing previous
           const newParsedEvents = parseHistoryToEvents(current.id, row.historico, row.solicitante);
           current.eventos = newParsedEvents;
           hasChanged = true;
@@ -504,6 +656,8 @@ class AppStore {
         } else {
           unchangedCount++;
         }
+      } else if (item.action === 'SEM_ALTERACAO') {
+        unchangedCount++;
       }
     }
 
@@ -511,7 +665,7 @@ class AppStore {
       id: importId,
       arquivo: analysis.fileName,
       data_importacao: now,
-      usuario: user.nome,
+      usuario: userNome,
       quantidade_registros: analysis.totalFound,
       novos: newCount,
       atualizados: updateCount,
@@ -523,6 +677,9 @@ class AppStore {
     this.save(STORAGE_KEYS.ORDERS, this.orders);
     this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
     this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
+    
+    // Push new records to Supabase & Firestore in background
+    dbSync.pushAllToSupabase(this.orders, this.schedules, this.units).catch(e => console.warn(e));
 
     this.notify();
     return record;
@@ -535,11 +692,11 @@ class AppStore {
       id: `aud-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
     };
     this.auditLogs.unshift(log);
-    // Limit to 500 logs to prevent memory saturation
     if (this.auditLogs.length > 500) {
       this.auditLogs = this.auditLogs.slice(0, 500);
     }
     this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
+    dbSync.saveAuditLog(log);
   }
 
   // Schedule CRUD
@@ -569,6 +726,7 @@ class AppStore {
     }
 
     this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+    dbSync.saveSchedule(newSch);
     this.notify();
     return newSch;
   }
@@ -602,6 +760,7 @@ class AppStore {
     }
 
     this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+    created.forEach(s => dbSync.saveSchedule(s));
     this.notify();
     return created;
   }
@@ -611,6 +770,7 @@ class AppStore {
     if (idx !== -1) {
       this.schedules[idx] = { ...this.schedules[idx], ...partial };
       this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+      dbSync.saveSchedule(this.schedules[idx]);
       this.notify();
     }
   }
@@ -618,6 +778,7 @@ class AppStore {
   public deleteSchedule(id: string) {
     this.schedules = this.schedules.filter(s => s.id !== id);
     this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+    dbSync.deleteSchedule(id);
     this.notify();
   }
 
@@ -637,7 +798,6 @@ class AppStore {
 
     if (linkedCount > 0) {
       this.save(STORAGE_KEYS.ORDERS, this.orders);
-      this.notify();
     }
     return { linkedCount };
   }
@@ -648,6 +808,7 @@ class AppStore {
     const unit: HospitalUnit = { ...unitData, id };
     this.units.push(unit);
     this.save(STORAGE_KEYS.UNITS, this.units);
+    dbSync.saveUnit(unit);
     this.notify();
     return unit;
   }
@@ -657,41 +818,31 @@ class AppStore {
     if (idx !== -1) {
       this.units[idx] = { ...this.units[idx], ...partial };
       this.save(STORAGE_KEYS.UNITS, this.units);
+      dbSync.saveUnit(this.units[idx]);
       this.notify();
     }
   }
 
-  // Reset to initial 631 records
-  public resetToDefault() {
-    this.orders = generateSeedOrders();
-    this.schedules = INITIAL_SCHEDULES;
-    this.units = INITIAL_UNITS;
-    this.programs = INITIAL_PROGRAMS;
-    this.orderTypes = INITIAL_TYPES;
-    this.auditLogs = [];
-    this.importRecords = [
-      {
-        id: 'imp-seed-1',
-        arquivo: 'relatorio-solicitacoes-setembro.xlsx',
-        data_importacao: '2026-09-24T08:00:00Z',
-        usuario: 'Rodrigo Cesar (Carga Inicial)',
-        quantidade_registros: 631,
-        novos: 631,
-        atualizados: 0,
-        sem_alteracao: 0,
-        erros: 0,
-      }
-    ];
+  // Strictly reload directly from the database backend
+  public async resetToDefault() {
+    return await this.loadBackendData();
+  }
 
-    this.save(STORAGE_KEYS.ORDERS, this.orders);
-    this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
-    this.save(STORAGE_KEYS.UNITS, this.units);
-    this.save(STORAGE_KEYS.PROGRAMS, this.programs);
-    this.save(STORAGE_KEYS.TYPES, this.orderTypes);
-    this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
-    this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
+  public async reloadStrictFromBackend() {
+    return await this.loadBackendData();
+  }
 
-    this.notify();
+  // Supabase sync integrations
+  public async syncAllToSupabase() {
+    return await dbSync.pushAllToSupabase(this.orders, this.schedules, this.units);
+  }
+
+  public async syncAllFromSupabase() {
+    return await this.loadBackendData();
+  }
+
+  public getDatabaseStatus() {
+    return dbSync.getStatus();
   }
 }
 

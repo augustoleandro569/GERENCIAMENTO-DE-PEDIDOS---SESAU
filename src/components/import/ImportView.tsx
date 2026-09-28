@@ -498,23 +498,31 @@ export const ImportView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {importRecords.map((rec) => (
-                <tr key={rec.id} className="hover:bg-slate-50/50">
-                  <td className="p-2.5 font-mono text-[11px] text-slate-600 whitespace-nowrap">
-                    {formatDate(rec.data_importacao)}
+              {importRecords.length > 0 ? (
+                importRecords.map((rec) => (
+                  <tr key={rec.id} className="hover:bg-slate-50/50">
+                    <td className="p-2.5 font-mono text-[11px] text-slate-600 whitespace-nowrap">
+                      {formatDate(rec.data_importacao)}
+                    </td>
+                    <td className="p-2.5 font-semibold text-slate-800 flex items-center gap-1.5">
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>{rec.arquivo}</span>
+                    </td>
+                    <td className="p-2.5 text-slate-600">{rec.usuario}</td>
+                    <td className="p-2.5 text-right font-mono font-bold text-slate-900">{rec.quantidade_registros}</td>
+                    <td className="p-2.5 text-right font-mono text-emerald-700 font-bold">{rec.novos}</td>
+                    <td className="p-2.5 text-right font-mono text-blue-700 font-bold">{rec.atualizados}</td>
+                    <td className="p-2.5 text-right font-mono text-slate-500">{rec.sem_alteracao}</td>
+                    <td className="p-2.5 text-right font-mono text-rose-600 font-bold">{rec.erros}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={8} className="p-6 text-center text-xs text-slate-400">
+                    Nenhuma operação de importação avulsa registrada. Todos os pedidos exibidos no sistema estão sincronizados e gravados diretamente no banco de dados.
                   </td>
-                  <td className="p-2.5 font-semibold text-slate-800 flex items-center gap-1.5">
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                    <span>{rec.arquivo}</span>
-                  </td>
-                  <td className="p-2.5 text-slate-600">{rec.usuario}</td>
-                  <td className="p-2.5 text-right font-mono font-bold text-slate-900">{rec.quantidade_registros}</td>
-                  <td className="p-2.5 text-right font-mono text-emerald-700 font-bold">{rec.novos}</td>
-                  <td className="p-2.5 text-right font-mono text-blue-700 font-bold">{rec.atualizados}</td>
-                  <td className="p-2.5 text-right font-mono text-slate-500">{rec.sem_alteracao}</td>
-                  <td className="p-2.5 text-right font-mono text-rose-600 font-bold">{rec.erros}</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>

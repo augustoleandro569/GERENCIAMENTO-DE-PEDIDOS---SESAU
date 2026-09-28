@@ -1,14 +1,21 @@
 import { useState, useEffect } from 'react';
 import { store } from '../services/store';
+import { dbSync } from '../services/dbSync';
 
 export function useStore() {
   const [, setTick] = useState(0);
 
   useEffect(() => {
-    const unsubscribe = store.subscribe(() => {
+    const unsubStore = store.subscribe(() => {
       setTick(t => t + 1);
     });
-    return unsubscribe;
+    const unsubDb = dbSync.subscribeStatus(() => {
+      setTick(t => t + 1);
+    });
+    return () => {
+      unsubStore();
+      unsubDb();
+    };
   }, []);
 
   return {
@@ -21,6 +28,7 @@ export function useStore() {
     auditLogs: store.getAuditLogs(),
     currentUser: store.getCurrentUser(),
     settings: store.getSettings(),
+    dbStatus: store.getDatabaseStatus(),
     // Actions
     addOrder: store.addOrder.bind(store),
     updateOrder: store.updateOrder.bind(store),
@@ -36,5 +44,8 @@ export function useStore() {
     setCurrentUser: store.setCurrentUser.bind(store),
     updateSettings: store.updateSettings.bind(store),
     resetToDefault: store.resetToDefault.bind(store),
+    reloadStrictFromBackend: store.reloadStrictFromBackend.bind(store),
+    syncAllToSupabase: store.syncAllToSupabase.bind(store),
+    syncAllFromSupabase: store.syncAllFromSupabase.bind(store),
   };
 }

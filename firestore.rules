@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'augustoleandro569@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    match /orders/{orderId} {
+      allow read: if true;
+      allow create, update: if isValidId(orderId);
+      allow delete: if isAdmin() || isSignedIn();
+    }
+
+    match /schedules/{scheduleId} {
+      allow read: if true;
+      allow create, update: if isValidId(scheduleId);
+      allow delete: if isAdmin() || isSignedIn();
+    }
+
+    match /hospital_units/{unitId} {
+      allow read: if true;
+      allow create, update: if isValidId(unitId);
+      allow delete: if isAdmin() || isSignedIn();
+    }
+
+    match /programs/{programId} {
+      allow read: if true;
+      allow create, update: if isValidId(programId);
+      allow delete: if isAdmin() || isSignedIn();
+    }
+
+    match /request_types/{typeId} {
+      allow read: if true;
+      allow create, update: if isValidId(typeId);
+      allow delete: if isAdmin() || isSignedIn();
+    }
+
+    match /import_records/{importId} {
+      allow read: if true;
+      allow create, update: if isValidId(importId);
+      allow delete: if isAdmin() || isSignedIn();
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if true;
+      allow create: if isValidId(logId);
+      allow update, delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin() || isSignedIn();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
