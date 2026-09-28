@@ -708,7 +708,7 @@ class AppStore {
     if (this.settings.auto_vincular_cronograma) {
       let linked = false;
       this.orders.forEach(order => {
-        if (!order.cronograma_id) {
+        if (!order.cronograma_id && order.cronograma_vinculo !== 'NENHUM') {
           const match = this.findMatchingSchedule(order.unidade, order.programa, order.tipo);
           if (match && match.id === id) {
             order.cronograma_id = id;
@@ -742,7 +742,7 @@ class AppStore {
     if (this.settings.auto_vincular_cronograma) {
       let linked = false;
       this.orders.forEach(order => {
-        if (!order.cronograma_id) {
+        if (!order.cronograma_id && order.cronograma_vinculo !== 'NENHUM') {
           const match = this.findMatchingSchedule(order.unidade, order.programa, order.tipo);
           if (match && created.some(c => c.id === match.id)) {
             order.cronograma_id = match.id;
@@ -786,11 +786,15 @@ class AppStore {
   public runAutoLinking(): { linkedCount: number } {
     let linkedCount = 0;
     this.orders.forEach(order => {
-      if (!order.cronograma_id) {
+      // Do not re-link orders explicitly marked as NENHUM (manually unlinked)
+      if (!order.cronograma_id && order.cronograma_vinculo !== 'NENHUM') {
         const match = this.findMatchingSchedule(order.unidade, order.programa, order.tipo);
         if (match) {
           order.cronograma_id = match.id;
           order.cronograma_vinculo = 'AUTOMÁTICO';
+          if (!order.data_prevista_entrega && match.data_entrega) {
+            order.data_prevista_entrega = match.data_entrega;
+          }
           linkedCount++;
         }
       }
@@ -800,6 +804,258 @@ class AppStore {
       this.save(STORAGE_KEYS.ORDERS, this.orders);
     }
     return { linkedCount };
+  }
+
+  /**
+   * Desvincula todos os pedidos de um determinado dia do calendário e cronograma.
+   * Remove datas previstas de entrega/etapas e remove o vínculo com cronograma de todos os pedidos agendados para aquele dia.
+   *
+   * @param dayOrDate Número do dia (ex: 24) ou string de data (ex: "2026-09-24", "24/09/2026")
+   * @param monthNumber Número do mês (padrão 9 para Setembro)
+   * @param options Configurações adicionais de desvinculação
+   */
+  public async unlinkOrdersOfDay(
+    dayOrDate: number | string,
+    monthNumber?: number,
+    options?: {
+      clearSchedule?: boolean;
+      clearDeliveryDate?: boolean;
+      clearStageDates?: boolean;
+      responsavel?: string | UserProfile;
+      motivo?: string;
+    }
+  ): Promise<{
+    success: boolean;
+    unlinkedCount: number;
+    affectedOrders: Order[];
+    dateFormatted: string;
+  }> {
+    let day = 0;
+    let month = monthNumber || 9;
+
+    if (typeof dayOrDate === 'string') {
+      const clean = dayOrDate.trim();
+      if (clean.includes('-')) {
+        const parts = clean.split('T')[0].split(' ')[0].split('-');
+        if (parts[0].length === 4) {
+          month = parseInt(parts[1], 10);
+          day = parseInt(parts[2], 10);
+        } else {
+          day = parseInt(parts[0], 10);
+          month = parseInt(parts[1], 10);
+        }
+      } else if (clean.includes('/')) {
+        const parts = clean.split(' ')[0].split('/');
+        if (parts[2] && parts[2].length === 4) {
+          day = parseInt(parts[0], 10);
+          month = parseInt(parts[1], 10);
+        } else {
+          month = parseInt(parts[1], 10);
+          day = parseInt(parts[2], 10);
+        }
+      } else {
+        day = parseInt(clean, 10);
+      }
+    } else {
+      day = dayOrDate;
+    }
+
+    if (!day || isNaN(day) || !month || isNaN(month)) {
+      return { success: false, unlinkedCount: 0, affectedOrders: [], dateFormatted: '' };
+    }
+
+    const monthStr = String(month).padStart(2, '0');
+    const dayStr = String(day).padStart(2, '0');
+    const dateFormatted = `${dayStr}/${monthStr}/2026`;
+
+    const matchesDay = (dateVal?: string | null): boolean => {
+      if (!dateVal) return false;
+      const clean = dateVal.trim();
+      if (clean.includes('-')) {
+        const parts = clean.split('T')[0].split(' ')[0].split('-');
+        if (parts.length >= 3) {
+          if (parts[0].length === 4) {
+            return parseInt(parts[1], 10) === month && parseInt(parts[2], 10) === day;
+          } else {
+            return parseInt(parts[1], 10) === month && parseInt(parts[0], 10) === day;
+          }
+        }
+      } else if (clean.includes('/')) {
+        const parts = clean.split(' ')[0].split('/');
+        if (parts.length >= 3) {
+          if (parts[2].length === 4) {
+            return parseInt(parts[1], 10) === month && parseInt(parts[0], 10) === day;
+          } else {
+            return parseInt(parts[1], 10) === month && parseInt(parts[2], 10) === day;
+          }
+        }
+      }
+      return false;
+    };
+
+    const schedulesMap = new Map<string, Schedule>();
+    this.schedules.forEach(s => schedulesMap.set(s.id, s));
+
+    const clearSchedule = options?.clearSchedule !== false;
+    const clearDeliveryDate = options?.clearDeliveryDate !== false;
+    const clearStageDates = options?.clearStageDates !== false;
+    const userNome = typeof options?.responsavel === 'object' && options?.responsavel !== null
+      ? options.responsavel.nome
+      : (options?.responsavel || this.currentUser.nome);
+
+    const nowIso = new Date().toISOString();
+    const nowBr = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    const motivo = options?.motivo || `Desvinculação de todos os pedidos agendados para o dia ${dateFormatted}`;
+
+    const affectedOrders: Order[] = [];
+
+    this.orders.forEach(order => {
+      const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
+
+      const matchDelivery = matchesDay(order.data_prevista_entrega) || (sch ? matchesDay(sch.data_entrega) : false);
+      const matchSeparation = matchesDay(order.data_inicio_separacao) || (sch ? matchesDay(sch.data_separacao) : false);
+      const matchExpedition = matchesDay(order.data_expedicao) || (sch ? matchesDay(sch.data_expedicao) : false);
+      const matchApproval = matchesDay(order.data_aprovacao) || (sch ? matchesDay(sch.data_limite_aprovacao) : false);
+      const matchSolicitation = matchesDay(order.data_solicitacao) || (sch ? matchesDay(sch.data_limite_solicitacao) : false);
+      const matchInicio = matchesDay(order.data_inicio);
+
+      const belongsToDay = matchDelivery || matchSeparation || matchExpedition || matchApproval || matchSolicitation || matchInicio;
+
+      if (belongsToDay) {
+        if (clearDeliveryDate || matchDelivery) {
+          order.data_prevista_entrega = undefined;
+        }
+
+        if (clearSchedule) {
+          order.cronograma_id = null;
+          order.cronograma_vinculo = 'NENHUM';
+        }
+
+        if (clearStageDates) {
+          if (matchesDay(order.data_inicio_separacao)) {
+            order.data_inicio_separacao = undefined;
+          }
+          if (matchesDay(order.data_expedicao)) {
+            order.data_expedicao = undefined;
+          }
+          if (matchesDay(order.data_inicio)) {
+            order.data_inicio = undefined;
+          }
+          if (matchesDay(order.data_aprovacao)) {
+            order.data_aprovacao = undefined;
+          }
+          if (matchesDay(order.data_solicitacao)) {
+            order.data_solicitacao = undefined;
+          }
+        }
+
+        // Always clean any exact day stage matches to avoid sticking to this day
+        if (matchesDay(order.data_inicio_separacao)) order.data_inicio_separacao = undefined;
+        if (matchesDay(order.data_expedicao)) order.data_expedicao = undefined;
+        if (matchesDay(order.data_inicio)) order.data_inicio = undefined;
+        if (matchesDay(order.data_aprovacao)) order.data_aprovacao = undefined;
+        if (matchesDay(order.data_solicitacao)) order.data_solicitacao = undefined;
+
+        order.atualizado_em = nowIso;
+
+        // Register event
+        const unlinkedEvent: OrderEvent = {
+          id: `evt-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          pedido_id: order.id,
+          tipo_evento: 'Desvinculação do Dia',
+          status: order.status_operacional,
+          data_evento: nowBr,
+          responsavel: userNome,
+          origem: 'SISTEMA',
+          observacao: motivo,
+        };
+        order.eventos = [...(order.eventos || []), unlinkedEvent];
+
+        // Register audit log
+        this.addAuditLog({
+          pedido_id: order.id,
+          codigo_pedido: order.codigo,
+          usuario: userNome,
+          data_hora: nowIso,
+          campo_alterado: 'Desvinculação do Dia',
+          valor_anterior: `Agendado no dia ${dateFormatted}`,
+          novo_valor: 'Desvinculado do dia e cronograma',
+        });
+
+        affectedOrders.push(order);
+      }
+    });
+
+    if (affectedOrders.length > 0) {
+      this.save(STORAGE_KEYS.ORDERS, this.orders);
+      this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
+      // Persist to Supabase in batch
+      dbSync.saveOrders(affectedOrders);
+      this.notify();
+    }
+
+    return {
+      success: true,
+      unlinkedCount: affectedOrders.length,
+      affectedOrders,
+      dateFormatted,
+    };
+  }
+
+  /**
+   * Desvincula um pedido individual de agendamento e cronograma
+   */
+  public async unlinkOrder(
+    orderId: string,
+    responsavel?: string | UserProfile,
+    motivo?: string
+  ): Promise<boolean> {
+    const idx = this.orders.findIndex(o => o.id === orderId);
+    if (idx === -1) return false;
+
+    const order = this.orders[idx];
+    const userNome = typeof responsavel === 'object' && responsavel !== null
+      ? responsavel.nome
+      : (responsavel || this.currentUser.nome);
+
+    const nowIso = new Date().toISOString();
+    const nowBr = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+
+    order.cronograma_id = null;
+    order.cronograma_vinculo = 'NENHUM';
+    order.data_prevista_entrega = undefined;
+    order.data_inicio_separacao = undefined;
+    order.data_expedicao = undefined;
+    order.data_inicio = undefined;
+    order.atualizado_em = nowIso;
+
+    const unlinkedEvent: OrderEvent = {
+      id: `evt-${order.id}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      pedido_id: order.id,
+      tipo_evento: 'Desvinculação Manual',
+      status: order.status_operacional,
+      data_evento: nowBr,
+      responsavel: userNome,
+      origem: 'SISTEMA',
+      observacao: motivo || 'Pedido desvinculado manualmente do cronograma e calendário',
+    };
+    order.eventos = [...(order.eventos || []), unlinkedEvent];
+
+    this.addAuditLog({
+      pedido_id: order.id,
+      codigo_pedido: order.codigo,
+      usuario: userNome,
+      data_hora: nowIso,
+      campo_alterado: 'Desvinculação',
+      valor_anterior: 'Agendado',
+      novo_valor: 'Desvinculado',
+    });
+
+    this.save(STORAGE_KEYS.ORDERS, this.orders);
+    this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
+    dbSync.saveOrder(order);
+    this.notify();
+    return true;
   }
 
   // Unit CRUD

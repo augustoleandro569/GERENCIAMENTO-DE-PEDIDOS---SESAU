@@ -59,22 +59,10 @@ export const ScheduleOrdersModal: React.FC<ScheduleOrdersModalProps> = ({
       : [schedule.unidade];
   }, [schedule]);
 
-  // All orders linked to this schedule (or matching unit/program/type)
+  // All orders linked to this schedule
   const linkedOrders = useMemo(() => {
     if (!schedule) return [];
-    return orders.filter(o => {
-      if (o.cronograma_id === schedule.id) return true;
-      // Also match if not explicitly linked to another schedule
-      if (!o.cronograma_id) {
-        const matchesUnit = 
-          (schedule.unidade && schedule.unidade.toUpperCase().trim() === o.unidade.toUpperCase().trim()) ||
-          (schedule.unidades && schedule.unidades.some(u => u.toUpperCase().trim() === o.unidade.toUpperCase().trim()));
-        const matchesProg = schedule.programa.toUpperCase().trim() === o.programa.toUpperCase().trim();
-        const matchesTipo = schedule.tipo_pedido.toUpperCase().trim() === o.tipo.toUpperCase().trim();
-        return matchesUnit && matchesProg && matchesTipo;
-      }
-      return false;
-    });
+    return orders.filter(o => o.cronograma_id === schedule.id);
   }, [orders, schedule]);
 
   // SLA Assessment for each order

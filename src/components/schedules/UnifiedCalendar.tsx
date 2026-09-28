@@ -47,7 +47,17 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
   onOpenNewSchedule,
   onOpenScheduleOrders,
 }) => {
-  const { schedules, units, orderTypes, orders, currentUser, updateOrder, updateOperationalStatus } = useStore();
+  const { 
+    schedules, 
+    units, 
+    orderTypes, 
+    orders, 
+    currentUser, 
+    updateOrder, 
+    updateOperationalStatus,
+    unlinkOrdersOfDay,
+    unlinkOrder 
+  } = useStore();
 
   const [currentMonth, setCurrentMonth] = useState<number>(9); // 9 = SET/26, 10 = OUT/26
   const [selectedDay, setSelectedDay] = useState<number | null>(24);
@@ -57,6 +67,13 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
   const [drawerStageTab, setDrawerStageTab] = useState<'TODOS' | 'ENTREGA' | 'SEPARACAO' | 'EXPEDICAO' | 'APROVACAO' | 'SOLICITACAO' | 'MARCOS'>('TODOS');
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [isDayOrdersModalOpen, setIsDayOrdersModalOpen] = useState(false);
+  const [isUnlinkConfirmOpen, setIsUnlinkConfirmOpen] = useState(false);
+  const [isUnlinking, setIsUnlinking] = useState(false);
+  const [unlinkOptions, setUnlinkOptions] = useState({
+    clearSchedule: true,
+    clearDeliveryDate: true,
+    clearStageDates: true,
+  });
 
   const monthStr = currentMonth === 9 ? '09' : '10';
   const totalDaysInMonth = currentMonth === 9 ? 30 : 31;
@@ -74,15 +91,33 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
     const clean = dateStr.trim();
     if (clean.includes('-')) {
       const parts = clean.split('T')[0].split(' ')[0].split('-');
-      if (parts[1] === monthStr) {
-        const d = parseInt(parts[2], 10);
-        return isNaN(d) ? null : d;
+      if (parts.length >= 3) {
+        if (parts[0].length === 4) {
+          if (parseInt(parts[1], 10) === currentMonth) {
+            const d = parseInt(parts[2], 10);
+            return isNaN(d) ? null : d;
+          }
+        } else {
+          if (parseInt(parts[1], 10) === currentMonth) {
+            const d = parseInt(parts[0], 10);
+            return isNaN(d) ? null : d;
+          }
+        }
       }
     } else if (clean.includes('/')) {
       const parts = clean.split(' ')[0].split('/');
-      if (parts[1] === monthStr) {
-        const d = parseInt(parts[0], 10);
-        return isNaN(d) ? null : d;
+      if (parts.length >= 3) {
+        if (parts[2].length === 4) {
+          if (parseInt(parts[1], 10) === currentMonth) {
+            const d = parseInt(parts[0], 10);
+            return isNaN(d) ? null : d;
+          }
+        } else {
+          if (parseInt(parts[1], 10) === currentMonth) {
+            const d = parseInt(parts[2], 10);
+            return isNaN(d) ? null : d;
+          }
+        }
       }
     }
     return null;
@@ -141,31 +176,31 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       const sch = ord.cronograma_id ? schedulesMap.get(ord.cronograma_id) : null;
 
       // Data de Entrega
-      const dEntrega = extractDayForMonth(ord.data_prevista_entrega || ord.entregue_em || sch?.data_entrega);
+      const dEntrega = extractDayForMonth(ord.data_prevista_entrega || sch?.data_entrega);
       if (dEntrega && map.has(dEntrega)) {
         map.get(dEntrega)!.entregas.push(ord);
       }
 
       // Início de Separação
-      const dSep = extractDayForMonth(ord.data_inicio_separacao || ord.separado_em || sch?.data_separacao);
+      const dSep = extractDayForMonth(ord.data_inicio_separacao || sch?.data_separacao);
       if (dSep && map.has(dSep)) {
         map.get(dSep)!.separacoes.push(ord);
       }
 
       // Expedição
-      const dExp = extractDayForMonth(ord.data_expedicao || ord.expedido_em || sch?.data_expedicao);
+      const dExp = extractDayForMonth(ord.data_expedicao || sch?.data_expedicao);
       if (dExp && map.has(dExp)) {
         map.get(dExp)!.expedicoes.push(ord);
       }
 
       // Aprovação
-      const dAprov = extractDayForMonth(ord.data_aprovacao || ord.validada_em || ord.validado_em || sch?.data_limite_aprovacao);
+      const dAprov = extractDayForMonth(ord.data_aprovacao || sch?.data_limite_aprovacao);
       if (dAprov && map.has(dAprov)) {
         map.get(dAprov)!.aprovacoes.push(ord);
       }
 
       // Solicitação
-      const dSol = extractDayForMonth(ord.data_solicitacao || ord.criado_em || sch?.data_limite_solicitacao);
+      const dSol = extractDayForMonth(ord.data_solicitacao || sch?.data_limite_solicitacao);
       if (dSol && map.has(dSol)) {
         map.get(dSol)!.solicitacoes.push(ord);
       }
@@ -237,6 +272,39 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
     updateOrder(order.id, { data_prevista_entrega: targetDateStr }, currentUser, `Reagendado para dia ${targetDay}`);
     showToast('success', `${order.codigo} reagendado`, `Nova data prevista: ${targetDay}/${monthStr}/2026`);
     setSelectedDay(targetDay);
+  };
+
+  const handleUnlinkCurrentDay = async () => {
+    if (!selectedDay) return;
+    try {
+      setIsUnlinking(true);
+      const result = await unlinkOrdersOfDay(selectedDay, currentMonth, {
+        clearSchedule: unlinkOptions.clearSchedule,
+        clearDeliveryDate: unlinkOptions.clearDeliveryDate,
+        clearStageDates: unlinkOptions.clearStageDates,
+        responsavel: currentUser,
+        motivo: `Desvinculação em lote realizada por ${currentUser.nome} no dia ${selectedDay}/${monthStr}/2026 via calendário`,
+      });
+
+      if (result.unlinkedCount > 0) {
+        showToast(
+          'success',
+          'Pedidos Desvinculados!',
+          `${result.unlinkedCount} pedido(s) foram desvinculados do dia ${selectedDay}/${monthStr}/2026 com sucesso.`
+        );
+      } else {
+        showToast(
+          'info',
+          'Nenhum pedido vinculado',
+          'Não há pedidos com vínculos ativos para serem desvinculados neste dia.'
+        );
+      }
+      setIsUnlinkConfirmOpen(false);
+    } catch {
+      showToast('error', 'Erro ao desvincular', 'Ocorreu uma falha ao tentar desvincular os pedidos deste dia.');
+    } finally {
+      setIsUnlinking(false);
+    }
   };
 
   return (
@@ -546,6 +614,18 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                   <span>+ Vincular Pedido a este Dia</span>
                 </button>
 
+                {/* Button to Unlink Orders of this day */}
+                {totalDayEvents > 0 && currentUser.role !== 'VIEWER' && (
+                  <button
+                    onClick={() => setIsUnlinkConfirmOpen(true)}
+                    className="w-full flex items-center justify-center gap-2 px-3.5 py-2 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold shadow-2xs hover:shadow-xs active:scale-98 transition-all cursor-pointer"
+                    title="Desvincular pedidos deste dia"
+                  >
+                    <Unlink className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Desvincular Pedidos do Dia ({totalDayEvents})</span>
+                  </button>
+                )}
+
                 {/* Button to Create New Schedule for this day with multiple units - Rounded Full */}
                 {onOpenNewSchedule && currentUser.role !== 'VIEWER' && (
                   <button
@@ -599,12 +679,12 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                                 </button>
                               )}
                               <button
-                                onClick={() => {
-                                  updateOrder(ord.id, { data_prevista_entrega: undefined }, currentUser, 'Desvinculado do dia no calendário');
-                                  showToast('info', `${ord.codigo} desvinculado`, 'Data agendada foi removida.');
+                                onClick={async () => {
+                                  await unlinkOrder(ord.id, currentUser, `Desvinculado do dia ${selectedDay}/${monthStr}/2026 no calendário`);
+                                  showToast('success', `${ord.codigo} desvinculado`, 'Pedido foi desvinculado deste dia e do cronograma.');
                                 }}
-                                className="p-1 text-slate-400 hover:text-rose-600 rounded-full hover:bg-white"
-                                title="Remover data de entrega"
+                                className="p-1 text-slate-400 hover:text-rose-600 rounded-full hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Desvincular pedido deste dia e cronograma"
                               >
                                 <Unlink className="w-3 h-3" />
                               </button>
@@ -663,14 +743,37 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                       {selectedDayData.separacoes.map(ord => (
                         <div
                           key={ord.id}
-                          onClick={() => onSelectOrder?.(ord)}
-                          className="p-2 bg-purple-50/40 rounded-xl border border-purple-200/70 flex items-center justify-between text-xs cursor-pointer hover:bg-purple-100/50 hover:shadow-2xs transition-all"
+                          className="p-2 bg-purple-50/40 rounded-xl border border-purple-200/70 flex items-center justify-between text-xs hover:bg-purple-100/50 hover:shadow-2xs transition-all"
                         >
-                          <div>
+                          <div 
+                            onClick={() => onSelectOrder?.(ord)}
+                            className="cursor-pointer"
+                          >
                             <span className="font-mono text-[11px] text-purple-950 font-bold">{ord.codigo}</span>
                             <span className="text-slate-600 ml-1">· {ord.unidade}</span>
+                            <span className="text-[10px] text-slate-500 font-mono font-semibold block">{ord.quantidade_itens} itens</span>
                           </div>
-                          <span className="text-[10px] text-slate-500 font-mono font-semibold">{ord.quantidade_itens} itens</span>
+                          <div className="flex items-center gap-1">
+                            {onSelectOrder && (
+                              <button
+                                onClick={() => onSelectOrder(ord)}
+                                className="p-1 text-slate-400 hover:text-blue-600 rounded-full hover:bg-white"
+                                title="Ver detalhes"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </button>
+                            )}
+                            <button
+                              onClick={async () => {
+                                await unlinkOrder(ord.id, currentUser, `Desvinculado do dia ${selectedDay}/${monthStr}/2026 no calendário`);
+                                showToast('success', `${ord.codigo} desvinculado`, 'Pedido foi desvinculado.');
+                              }}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded-full hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Desvincular"
+                            >
+                              <Unlink className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -693,14 +796,37 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                       {selectedDayData.expedicoes.map(ord => (
                         <div
                           key={ord.id}
-                          onClick={() => onSelectOrder?.(ord)}
-                          className="p-2 bg-cyan-50/40 rounded-xl border border-cyan-200/70 flex items-center justify-between text-xs cursor-pointer hover:bg-cyan-100/50 hover:shadow-2xs transition-all"
+                          className="p-2 bg-cyan-50/40 rounded-xl border border-cyan-200/70 flex items-center justify-between text-xs hover:bg-cyan-100/50 hover:shadow-2xs transition-all"
                         >
-                          <div>
+                          <div 
+                            onClick={() => onSelectOrder?.(ord)}
+                            className="cursor-pointer"
+                          >
                             <span className="font-mono text-[11px] text-cyan-950 font-bold">{ord.codigo}</span>
                             <span className="text-slate-600 ml-1">· {ord.unidade}</span>
+                            <span className="text-[10px] text-slate-500 font-mono block">{ord.status_operacional}</span>
                           </div>
-                          <span className="text-[10px] text-slate-500 font-mono">{ord.status_operacional}</span>
+                          <div className="flex items-center gap-1">
+                            {onSelectOrder && (
+                              <button
+                                onClick={() => onSelectOrder(ord)}
+                                className="p-1 text-slate-400 hover:text-blue-600 rounded-full hover:bg-white"
+                                title="Ver detalhes"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </button>
+                            )}
+                            <button
+                              onClick={async () => {
+                                await unlinkOrder(ord.id, currentUser, `Desvinculado do dia ${selectedDay}/${monthStr}/2026 no calendário`);
+                                showToast('success', `${ord.codigo} desvinculado`, 'Pedido foi desvinculado.');
+                              }}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded-full hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Desvincular"
+                            >
+                              <Unlink className="w-3 h-3" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -817,6 +943,100 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
         initialOrderType={filterOrderType}
         onOpenScheduleOrders={onOpenScheduleOrders}
       />
+
+      {/* Confirmation Modal to Unlink All Orders of the Day */}
+      {isUnlinkConfirmOpen && selectedDay && (
+        <div 
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => !isUnlinking && setIsUnlinkConfirmOpen(false)}
+        >
+          <div 
+            className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <Unlink className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Desvincular Pedidos do Dia {selectedDay}/{monthStr}/2026?
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Esta ação irá desvincular os pedidos atualmente agendados ou vinculados a este dia no calendário e cronograma.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2.5 text-xs text-slate-700">
+              <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+                <span>Opções de Desvinculação:</span>
+              </div>
+
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input 
+                  type="checkbox"
+                  checked={unlinkOptions.clearDeliveryDate}
+                  onChange={e => setUnlinkOptions(prev => ({ ...prev, clearDeliveryDate: e.target.checked }))}
+                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                />
+                <span className="text-slate-600">Remover data prevista de entrega / agendamento</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input 
+                  type="checkbox"
+                  checked={unlinkOptions.clearSchedule}
+                  onChange={e => setUnlinkOptions(prev => ({ ...prev, clearSchedule: e.target.checked }))}
+                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                />
+                <span className="text-slate-600">Remover vínculo com o cronograma de entrega oficial</span>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input 
+                  type="checkbox"
+                  checked={unlinkOptions.clearStageDates}
+                  onChange={e => setUnlinkOptions(prev => ({ ...prev, clearStageDates: e.target.checked }))}
+                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                />
+                <span className="text-slate-600">Limpar etapas operacionais vinculadas a este dia</span>
+              </label>
+            </div>
+
+            <div className="p-3 bg-amber-50/70 border border-amber-200/70 rounded-2xl text-[11px] text-amber-800 leading-relaxed">
+              <strong>Aviso:</strong> Os pedidos <strong>não</strong> serão excluídos. Eles continuarão registrados no banco de dados, livres para novos agendamentos no calendário.
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsUnlinkConfirmOpen(false)}
+                disabled={isUnlinking}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleUnlinkCurrentDay}
+                disabled={isUnlinking}
+                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-full transition-all cursor-pointer shadow-xs active:scale-95"
+              >
+                {isUnlinking ? (
+                  <span>Desvinculando...</span>
+                ) : (
+                  <>
+                    <Unlink className="w-3.5 h-3.5" />
+                    <span>Confirmar Desvinculação</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

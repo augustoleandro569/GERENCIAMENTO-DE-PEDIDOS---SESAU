@@ -142,18 +142,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
     const now = new Date('2026-09-24T14:15:00');
 
     return schedules.map(sch => {
-      const linkedOrders = orders.filter(o => {
-        if (o.cronograma_id === sch.id) return true;
-        if (!o.cronograma_id) {
-          const matchesUnit = 
-            (sch.unidade && sch.unidade.toUpperCase().trim() === o.unidade.toUpperCase().trim()) ||
-            (sch.unidades && sch.unidades.some(u => u.toUpperCase().trim() === o.unidade.toUpperCase().trim()));
-          const matchesProg = sch.programa.toUpperCase().trim() === o.programa.toUpperCase().trim();
-          const matchesTipo = sch.tipo_pedido.toUpperCase().trim() === o.tipo.toUpperCase().trim();
-          return matchesUnit && matchesProg && matchesTipo;
-        }
-        return false;
-      });
+      const linkedOrders = orders.filter(o => o.cronograma_id === sch.id);
 
       const total = linkedOrders.length;
       const delivered = linkedOrders.filter(o => o.status_operacional === 'Entregue' || o.status_operacional === 'Entregue Parcialmente').length;

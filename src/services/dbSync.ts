@@ -27,6 +27,30 @@ export interface DatabaseStatus {
 
 type SyncStatusListener = (status: DatabaseStatus) => void;
 
+/**
+ * Firestore strictly forbids `undefined` values in documents and throws an exception.
+ * This helper converts any `undefined` values to `null` recursively to ensure clean writes.
+ */
+export function sanitizeForFirestore<T>(data: T): any {
+  if (data === undefined) return null;
+  if (data === null || typeof data !== 'object') return data;
+  if (data instanceof Date) return data;
+  if (Array.isArray(data)) {
+    return data.map(item => sanitizeForFirestore(item));
+  }
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined) {
+      sanitized[key] = null;
+    } else if (value !== null && typeof value === 'object') {
+      sanitized[key] = sanitizeForFirestore(value);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
 class DatabaseSyncService {
   private statusListeners: Set<SyncStatusListener> = new Set();
   private isInitializing = false;
@@ -415,14 +439,14 @@ class DatabaseSyncService {
           entregador: order.entregador,
           entregue_em: order.entregue_em,
           historico_original: order.historico_original,
-          cronograma_id: order.cronograma_id,
-          cronograma_vinculo: order.cronograma_vinculo,
-          data_inicio: order.data_inicio,
-          data_solicitacao: order.data_solicitacao,
-          data_aprovacao: order.data_aprovacao,
-          data_inicio_separacao: order.data_inicio_separacao,
-          data_expedicao: order.data_expedicao,
-          data_prevista_entrega: order.data_prevista_entrega,
+          cronograma_id: order.cronograma_id ?? null,
+          cronograma_vinculo: order.cronograma_vinculo || 'NENHUM',
+          data_inicio: order.data_inicio ?? null,
+          data_solicitacao: order.data_solicitacao ?? null,
+          data_aprovacao: order.data_aprovacao ?? null,
+          data_inicio_separacao: order.data_inicio_separacao ?? null,
+          data_expedicao: order.data_expedicao ?? null,
+          data_prevista_entrega: order.data_prevista_entrega ?? null,
           prioridade: order.prioridade,
           observacoes: order.observacoes,
           importacao_id: order.importacao_id,
@@ -452,9 +476,87 @@ class DatabaseSyncService {
     // Also mirror to Firestore if active
     const path = `orders/${order.id}`;
     try {
-      await setDoc(doc(db, 'orders', order.id), order, { merge: true });
+      await setDoc(doc(db, 'orders', order.id), sanitizeForFirestore(order), { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, path);
+    }
+  }
+
+  // Bulk save multiple Orders efficiently (used in batch updates like unlinking a day)
+  public async saveOrders(orders: Order[]): Promise<void> {
+    if (!orders || orders.length === 0) return;
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const payload = orders.map(order => ({
+          id: order.id,
+          codigo: order.codigo,
+          origem: order.origem,
+          tipo: order.tipo,
+          solicitante: order.solicitante,
+          cpf: order.cpf,
+          programa: order.programa,
+          unidade: order.unidade,
+          quantidade_itens: order.quantidade_itens,
+          criado_em: order.criado_em,
+          status_origem: order.status_origem,
+          status_operacional: order.status_operacional,
+          validador: order.validador,
+          validada_em: order.validada_em,
+          separador: order.separador,
+          separado_em: order.separado_em,
+          conferente: order.conferente,
+          conferido_em: order.conferido_em,
+          expedidor: order.expedidor,
+          expedido_em: order.expedido_em,
+          entregador: order.entregador,
+          entregue_em: order.entregue_em,
+          historico_original: order.historico_original,
+          cronograma_id: order.cronograma_id ?? null,
+          cronograma_vinculo: order.cronograma_vinculo || 'NENHUM',
+          data_inicio: order.data_inicio ?? null,
+          data_solicitacao: order.data_solicitacao ?? null,
+          data_aprovacao: order.data_aprovacao ?? null,
+          data_inicio_separacao: order.data_inicio_separacao ?? null,
+          data_expedicao: order.data_expedicao ?? null,
+          data_prevista_entrega: order.data_prevista_entrega ?? null,
+          prioridade: order.prioridade,
+          observacoes: order.observacoes,
+          importacao_id: order.importacao_id,
+          atualizado_em: new Date().toISOString(),
+        }));
+
+        for (let i = 0; i < payload.length; i += 100) {
+          const chunk = payload.slice(i, i + 100);
+          await supabase.from('pedidos').upsert(chunk);
+        }
+
+        const eventsToUpsert = orders.flatMap(o => (o.eventos || []).map(e => ({
+          id: e.id,
+          pedido_id: e.pedido_id || o.id,
+          tipo_evento: e.tipo_evento,
+          status: e.status,
+          data_evento: e.data_evento,
+          responsavel: e.responsavel,
+          origem: e.origem || 'SISTEMA',
+          observacao: e.observacao,
+        })));
+
+        if (eventsToUpsert.length > 0) {
+          for (let i = 0; i < eventsToUpsert.length; i += 100) {
+            const chunk = eventsToUpsert.slice(i, i + 100);
+            await supabase.from('eventos_pedidos').upsert(chunk);
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase bulk saveOrders note:', err);
+      }
+    }
+
+    try {
+      await Promise.all(orders.map(o => setDoc(doc(db, 'orders', o.id), sanitizeForFirestore(o), { merge: true })));
+    } catch {
+      // Background mirror
     }
   }
 
@@ -484,7 +586,7 @@ class DatabaseSyncService {
     }
 
     try {
-      await setDoc(doc(db, 'schedules', schedule.id), schedule, { merge: true });
+      await setDoc(doc(db, 'schedules', schedule.id), sanitizeForFirestore(schedule), { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `schedules/${schedule.id}`);
     }
@@ -527,7 +629,7 @@ class DatabaseSyncService {
     }
 
     try {
-      await setDoc(doc(db, 'hospital_units', unit.id), unit, { merge: true });
+      await setDoc(doc(db, 'hospital_units', unit.id), sanitizeForFirestore(unit), { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `hospital_units/${unit.id}`);
     }
@@ -554,7 +656,7 @@ class DatabaseSyncService {
     }
 
     try {
-      await setDoc(doc(db, 'audit_logs', log.id), log, { merge: true });
+      await setDoc(doc(db, 'audit_logs', log.id), sanitizeForFirestore(log), { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `audit_logs/${log.id}`);
     }

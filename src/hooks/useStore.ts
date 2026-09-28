@@ -47,5 +47,7 @@ export function useStore() {
     reloadStrictFromBackend: store.reloadStrictFromBackend.bind(store),
     syncAllToSupabase: store.syncAllToSupabase.bind(store),
     syncAllFromSupabase: store.syncAllFromSupabase.bind(store),
+    unlinkOrdersOfDay: store.unlinkOrdersOfDay.bind(store),
+    unlinkOrder: store.unlinkOrder.bind(store),
   };
 }
