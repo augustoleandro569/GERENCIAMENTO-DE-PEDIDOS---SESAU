@@ -1,0 +1,6 @@
+{
+  "name": "Gestão de Pedidos Hospitalares",
+  "description": "Sistema de acompanhamento operacional e logístico de pedidos para unidades hospitalares com cronogramas, controle de prazos e importação XLSX/CSV.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
