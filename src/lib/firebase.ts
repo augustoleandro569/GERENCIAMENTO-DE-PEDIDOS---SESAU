@@ -1,11 +1,17 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-// CRITICAL: Must pass firebaseConfig.firestoreDatabaseId as the second parameter
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// CRITICAL: Must pass firebaseConfig.firestoreDatabaseId as the third parameter to initializeFirestore
+export const db = initializeFirestore(
+  app,
+  {
+    experimentalAutoDetectLongPolling: true,
+  },
+  firebaseConfig.firestoreDatabaseId
+);
 export const auth = getAuth(app);
 export const googleAuthProvider = new GoogleAuthProvider();
 
@@ -72,12 +78,19 @@ export async function testFirestoreConnection(): Promise<boolean> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
     return true;
-  } catch (error) {
-    if (error instanceof Error && (error.message.includes('the client is offline') || error.message.includes('unavailable'))) {
-      console.warn('Firestore client operating in offline cache mode until connection completes.');
+  } catch (error: any) {
+    const msg = error?.message || String(error);
+    if (msg.includes('client is offline') || msg.includes('unavailable') || error?.code === 'unavailable') {
+      console.warn('Firestore operating in offline / reconnecting mode.');
+      return false;
     }
-    return true;
+    return false;
   }
 }
 
-testFirestoreConnection().catch(() => {});
+// Run connection test non-blocking after initialization
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    testFirestoreConnection().catch(() => {});
+  }, 1000);
+}

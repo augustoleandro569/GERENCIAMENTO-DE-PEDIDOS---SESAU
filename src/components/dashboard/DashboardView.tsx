@@ -194,38 +194,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
 
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
-      {/* Page Title & Filter Bar - Rounded 3xl Header */}
-      <div className="bg-white/80 backdrop-blur-md p-3 sm:p-4 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+      {/* Page Title & Filter Bar - Crisp Solid Container */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-300 shadow-xs flex flex-col xl:flex-row xl:items-center justify-between gap-3 w-full">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-700 to-indigo-600 text-white flex items-center justify-center shadow-xs">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-800 to-indigo-900 text-white flex items-center justify-center shadow-xs shrink-0">
             <BarChart3 className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-slate-900 tracking-tight">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base font-bold text-slate-950 tracking-tight">
                 Painel Operacional de Abastecimento
               </h2>
-              <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-bold">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-blue-100 text-blue-900 border border-blue-300 font-extrabold shrink-0">
                 SESAU / AL
               </span>
             </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+            <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 flex-wrap">
               <span>Visão consolidada</span>
               <span>·</span>
-              <span className="font-mono font-bold text-slate-700">{filteredOrders.length} pedidos monitorados</span>
+              <span className="font-mono font-bold text-slate-800">{filteredOrders.length} pedidos monitorados</span>
               <span>·</span>
-              <span>Clique nos cartões para filtrar instantaneamente</span>
+              <span className="hidden sm:inline">Clique nos cartões para filtrar</span>
             </div>
           </div>
         </div>
 
-        {/* Filters - Rounded Full */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Filters - Crisp Segmented Selects */}
+        <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
           {/* Unit Filter */}
           <select
             value={selectedUnit}
             onChange={(e) => setSelectedUnit(e.target.value)}
-            className="text-xs bg-slate-50 hover:bg-slate-100/70 border border-slate-200/90 rounded-full px-3 py-2 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs hover:border-slate-300 transition-all cursor-pointer"
+            className="flex-1 sm:flex-initial sm:w-48 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
+            title="Filtrar por Unidade Hospitalar"
           >
             <option value="ALL">Todas as Unidades ({units.length})</option>
             {units.map(u => (
@@ -239,7 +240,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
           <select
             value={selectedProgram}
             onChange={(e) => setSelectedProgram(e.target.value)}
-            className="text-xs bg-slate-50 hover:bg-slate-100/70 border border-slate-200/90 rounded-full px-3 py-2 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs hover:border-slate-300 transition-all cursor-pointer"
+            className="flex-1 sm:flex-initial sm:w-40 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
+            title="Filtrar por Programa / Especialidade"
           >
             <option value="ALL">Todos os Programas</option>
             {programs.map(p => (
@@ -251,7 +253,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
           <select
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value)}
-            className="text-xs bg-slate-50 hover:bg-slate-100/70 border border-slate-200/90 rounded-full px-3 py-2 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs hover:border-slate-300 transition-all cursor-pointer"
+            className="flex-1 sm:flex-initial sm:w-38 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
+            title="Filtrar por Tipo de Pedido"
           >
             <option value="ALL">Todos os Tipos</option>
             {orderTypes.map(t => (
@@ -266,7 +269,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
                 setSelectedProgram('ALL');
                 setSelectedType('ALL');
               }}
-              className="text-xs text-rose-600 hover:text-rose-800 font-semibold px-3 py-1.5 rounded-full bg-rose-50 hover:bg-rose-100 transition-all active:scale-95 cursor-pointer flex items-center gap-1"
+              className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 transition-all active:scale-95 cursor-pointer flex items-center gap-1 shadow-2xs shrink-0"
+              title="Limpar todos os filtros ativos"
             >
               <RotateCcw className="w-3 h-3" />
               <span>Limpar</span>

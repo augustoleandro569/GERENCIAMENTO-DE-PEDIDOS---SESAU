@@ -11,7 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { getSupabaseClient, getSavedSupabaseConfig } from '../lib/supabase';
-import { Order, Schedule, HospitalUnit, AuditLog, OrderEvent } from '../types';
+import { Order, Schedule, HospitalUnit, AuditLog, OrderEvent, ImportRecord } from '../types';
 import { parseHistoryToEvents } from '../utils/historyParser';
 
 export interface DatabaseStatus {
@@ -318,7 +318,8 @@ class DatabaseSyncService {
   public async initFirestore(
     onRemoteOrders: (orders: Order[]) => void,
     onRemoteSchedules: (schedules: Schedule[]) => void,
-    onRemoteUnits: (units: HospitalUnit[]) => void
+    onRemoteUnits: (units: HospitalUnit[]) => void,
+    onRemoteImports?: (imports: ImportRecord[]) => void
   ) {
     if (this.isInitializing) return;
     this.isInitializing = true;
@@ -374,6 +375,25 @@ class DatabaseSyncService {
           handleFirestoreError(error, OperationType.LIST, 'hospital_units');
         }
       );
+
+      // 4. Attach real-time listener for Import Records if handler provided
+      if (onRemoteImports) {
+        onSnapshot(
+          collection(db, 'import_records'),
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const list: ImportRecord[] = [];
+              snapshot.forEach((d) => list.push(d.data() as ImportRecord));
+              // Sort newest first
+              list.sort((a, b) => new Date(b.data_importacao).getTime() - new Date(a.data_importacao).getTime());
+              onRemoteImports(list);
+            }
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.LIST, 'import_records');
+          }
+        );
+      }
 
       this.status.firestoreConnected = true;
       this.status.lastFirestoreSync = new Date();
@@ -553,11 +573,210 @@ class DatabaseSyncService {
       }
     }
 
+    // Also mirror to Firestore using batched writes for reliability
     try {
-      await Promise.all(orders.map(o => setDoc(doc(db, 'orders', o.id), sanitizeForFirestore(o), { merge: true })));
-    } catch {
-      // Background mirror
+      const BATCH_SIZE = 400;
+      for (let i = 0; i < orders.length; i += BATCH_SIZE) {
+        const chunk = orders.slice(i, i + BATCH_SIZE);
+        const batch = writeBatch(db);
+        for (const o of chunk) {
+          batch.set(doc(db, 'orders', o.id), sanitizeForFirestore(o), { merge: true });
+        }
+        await batch.commit();
+      }
+    } catch (fsErr) {
+      console.warn('Firestore bulk saveOrders note:', fsErr);
     }
+  }
+
+  // Save single Import Record to Firestore and Supabase
+  public async saveImportRecord(record: ImportRecord): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('importacoes').upsert({
+          id: record.id,
+          arquivo: record.arquivo,
+          data_importacao: record.data_importacao,
+          usuario: record.usuario,
+          quantidade_registros: record.quantidade_registros,
+          novos: record.novos,
+          atualizados: record.atualizados,
+          sem_alteracao: record.sem_alteracao,
+          erros: record.erros,
+        });
+      } catch (err) {
+        console.warn('Supabase import record upsert note:', err);
+      }
+    }
+
+    try {
+      await setDoc(doc(db, 'import_records', record.id), sanitizeForFirestore(record), { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `import_records/${record.id}`);
+    }
+  }
+
+  /**
+   * Directly feeds the database with all affected orders, the import record, and any audit logs
+   * generated from a spreadsheet import.
+   * Uses batched writes to Firestore (atomic chunks of up to 400 operations)
+   * and bulk upsert to Supabase if active.
+   */
+  public async saveImportedData(
+    ordersToSave: Order[],
+    importRecord: ImportRecord,
+    auditLogsToSave: AuditLog[] = []
+  ): Promise<{ success: boolean; count: number; message: string }> {
+    let savedOrdersCount = 0;
+    this.status.firestoreSyncing = true;
+    this.notifyStatus();
+
+    // 1. Persist directly to Firestore using writeBatch
+    try {
+      // Save Import Record
+      if (importRecord) {
+        const recordDocRef = doc(db, 'import_records', importRecord.id);
+        await setDoc(recordDocRef, sanitizeForFirestore(importRecord), { merge: true });
+      }
+
+      // Save orders in batches of 400 (Firestore maximum is 500 per batch)
+      if (ordersToSave && ordersToSave.length > 0) {
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < ordersToSave.length; i += BATCH_SIZE) {
+          const chunk = ordersToSave.slice(i, i + BATCH_SIZE);
+          const batch = writeBatch(db);
+
+          for (const order of chunk) {
+            const orderDocRef = doc(db, 'orders', order.id);
+            batch.set(orderDocRef, sanitizeForFirestore(order), { merge: true });
+          }
+
+          await batch.commit();
+          savedOrdersCount += chunk.length;
+        }
+      }
+
+      // Save audit logs in batch if any
+      if (auditLogsToSave && auditLogsToSave.length > 0) {
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < auditLogsToSave.length; i += BATCH_SIZE) {
+          const chunk = auditLogsToSave.slice(i, i + BATCH_SIZE);
+          const batch = writeBatch(db);
+          for (const log of chunk) {
+            const logDocRef = doc(db, 'audit_logs', log.id);
+            batch.set(logDocRef, sanitizeForFirestore(log), { merge: true });
+          }
+          await batch.commit();
+        }
+      }
+
+      this.status.firestoreConnected = true;
+      this.status.lastFirestoreSync = new Date();
+    } catch (fsErr) {
+      console.error('Firestore saveImportedData error:', fsErr);
+      handleFirestoreError(fsErr, OperationType.WRITE, 'orders/bulk_import');
+    }
+
+    // 2. Also upsert into Supabase if configured
+    const supabase = getSupabaseClient();
+    if (supabase && ordersToSave && ordersToSave.length > 0) {
+      try {
+        const payload = ordersToSave.map(order => ({
+          id: order.id,
+          codigo: order.codigo,
+          origem: order.origem || 'IMPORTAÇÃO',
+          tipo: order.tipo,
+          solicitante: order.solicitante,
+          cpf: order.cpf,
+          programa: order.programa,
+          unidade: order.unidade,
+          quantidade_itens: order.quantidade_itens,
+          criado_em: order.criado_em,
+          status_origem: order.status_origem,
+          status_operacional: order.status_operacional,
+          validador: order.validador,
+          validada_em: order.validada_em,
+          separador: order.separador,
+          separado_em: order.separado_em,
+          conferente: order.conferente,
+          conferido_em: order.conferido_em,
+          expedidor: order.expedidor,
+          expedido_em: order.expedido_em,
+          entregador: order.entregador,
+          entregue_em: order.entregue_em,
+          historico_original: order.historico_original,
+          cronograma_id: order.cronograma_id ?? null,
+          cronograma_vinculo: order.cronograma_vinculo || 'NENHUM',
+          data_inicio: order.data_inicio ?? null,
+          data_solicitacao: order.data_solicitacao ?? null,
+          data_aprovacao: order.data_aprovacao ?? null,
+          data_inicio_separacao: order.data_inicio_separacao ?? null,
+          data_expedicao: order.data_expedicao ?? null,
+          data_prevista_entrega: order.data_prevista_entrega ?? null,
+          prioridade: order.prioridade,
+          observacoes: order.observacoes,
+          importacao_id: order.importacao_id || importRecord?.id,
+          atualizado_em: order.atualizado_em || new Date().toISOString(),
+        }));
+
+        for (let i = 0; i < payload.length; i += 100) {
+          const chunk = payload.slice(i, i + 100);
+          await supabase.from('pedidos').upsert(chunk);
+        }
+
+        // Also sync events
+        const eventsToSync: any[] = [];
+        ordersToSave.forEach(ord => {
+          if (ord.eventos && ord.eventos.length > 0) {
+            ord.eventos.forEach(ev => {
+              eventsToSync.push({
+                id: ev.id,
+                pedido_id: ev.pedido_id || ord.id,
+                tipo_evento: ev.tipo_evento,
+                status: ev.status,
+                data_evento: ev.data_evento,
+                responsavel: ev.responsavel,
+                origem: ev.origem || 'IMPORTAÇÃO',
+                observacao: ev.observacao || null,
+              });
+            });
+          }
+        });
+
+        if (eventsToSync.length > 0) {
+          for (let i = 0; i < eventsToSync.length; i += 200) {
+            const evChunk = eventsToSync.slice(i, i + 200);
+            await supabase.from('eventos_pedidos').upsert(evChunk);
+          }
+        }
+
+        if (importRecord) {
+          await supabase.from('importacoes').upsert({
+            id: importRecord.id,
+            arquivo: importRecord.arquivo,
+            data_importacao: importRecord.data_importacao,
+            usuario: importRecord.usuario,
+            quantidade_registros: importRecord.quantidade_registros,
+            novos: importRecord.novos,
+            atualizados: importRecord.atualizados,
+            sem_alteracao: importRecord.sem_alteracao,
+            erros: importRecord.erros,
+          });
+        }
+      } catch (sbErr) {
+        console.warn('Supabase saveImportedData upsert note:', sbErr);
+      }
+    }
+
+    this.status.firestoreSyncing = false;
+    this.notifyStatus();
+
+    return {
+      success: true,
+      count: savedOrdersCount,
+      message: `${savedOrdersCount} pedidos gravados no banco de dados com sucesso.`,
+    };
   }
 
   // Save single Schedule

@@ -5,6 +5,7 @@ import { formatDate, formatShortDate, parseDateSafe, calculateDeadlineSituation 
 import { UnifiedCalendar } from './UnifiedCalendar';
 import { DayOrdersModal } from './DayOrdersModal';
 import { ScheduleOrdersModal } from './ScheduleOrdersModal';
+import { MultiSelect } from '../common/MultiSelect';
 import { showToast } from '../common/Toast';
 import { 
   Calendar as CalendarIcon, 
@@ -30,7 +31,8 @@ import {
   Check,
   Search,
   Layers,
-  CalendarPlus
+  CalendarPlus,
+  RotateCcw
 } from 'lucide-react';
 
 interface ScheduleViewProps {
@@ -74,6 +76,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
 
   // Day Orders Modal for direct date clicks in Progresso/Tabela tabs
   const [dayOrdersModalConfig, setDayOrdersModalConfig] = useState<{ day: number; month: number; type?: string } | null>(null);
+
+  // Multi-filtros para abas de Progresso e Tabela
+  const [filterUnits, setFilterUnits] = useState<string[]>([]);
+  const [filterPrograms, setFilterPrograms] = useState<string[]>([]);
+  const [filterTypes, setFilterTypes] = useState<string[]>([]);
 
   const handleOpenDayFromDate = (dateStr?: string | null, type?: string) => {
     if (!dateStr) return;
@@ -215,6 +222,39 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
       };
     });
   }, [schedules, orders, settings]);
+
+  // Lista filtrada por multi-seleção de filtros e opções
+  const filteredScheduleProgressList = useMemo(() => {
+    return scheduleProgressList.filter(({ sch }) => {
+      if (filterUnits.length > 0) {
+        const schUnits = sch.unidades && sch.unidades.length > 0
+          ? sch.unidades
+          : sch.unidade.includes(',')
+          ? sch.unidade.split(',').map((s: string) => s.trim())
+          : [sch.unidade];
+        if (!schUnits.some((u: string) => filterUnits.includes(u))) return false;
+      }
+      if (filterPrograms.length > 0 && !filterPrograms.includes(sch.programa)) return false;
+      if (filterTypes.length > 0 && !filterTypes.includes(sch.tipo_pedido)) return false;
+      return true;
+    });
+  }, [scheduleProgressList, filterUnits, filterPrograms, filterTypes]);
+
+  const filteredSchedulesList = useMemo(() => {
+    return schedules.filter(sch => {
+      if (filterUnits.length > 0) {
+        const schUnits = sch.unidades && sch.unidades.length > 0
+          ? sch.unidades
+          : sch.unidade.includes(',')
+          ? sch.unidade.split(',').map((s: string) => s.trim())
+          : [sch.unidade];
+        if (!schUnits.some((u: string) => filterUnits.includes(u))) return false;
+      }
+      if (filterPrograms.length > 0 && !filterPrograms.includes(sch.programa)) return false;
+      if (filterTypes.length > 0 && !filterTypes.includes(sch.tipo_pedido)) return false;
+      return true;
+    });
+  }, [schedules, filterUnits, filterPrograms, filterTypes]);
 
   const handleOpenNew = () => {
     setEditingSchedule(null);
@@ -387,36 +427,36 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
 
   return (
     <div className="space-y-4">
-      {/* Top Header - Rounded 3xl Container */}
-      <div className="bg-white/80 backdrop-blur-md p-3 sm:p-4 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Top Header - Crisp Solid Container */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-300 shadow-xs flex flex-col xl:flex-row xl:items-center justify-between gap-3 w-full">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-xs">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-600 to-cyan-700 text-white flex items-center justify-center shadow-xs shrink-0">
             <CalendarIcon className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-slate-900 tracking-tight">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base font-bold text-slate-950 tracking-tight">
                 Cronograma & Calendário de Abastecimento
               </h2>
-              <span className="text-[11px] font-mono text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200/70 font-bold">
+              <span className="text-[11px] font-mono text-emerald-900 bg-emerald-100 px-2.5 py-0.5 rounded-md border border-emerald-300 font-extrabold shrink-0">
                 {schedules.length} cronogramas ativos
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-500 mt-0.5">
               Mapeamento unificado de datas: Solicitação, Aprovação, Separação, Expedição e Entrega no Hospital
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Main Segmented Switcher: Calendário, Progresso, Lista - Rounded Full */}
-          <div className="flex items-center p-1 bg-slate-100/90 rounded-full border border-slate-200/50 shadow-inner text-xs">
+          {/* Main Segmented Switcher: Calendário, Progresso, Lista */}
+          <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-300 text-xs shadow-2xs">
             <button
               onClick={() => setActiveTab('calendario')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
                 activeTab === 'calendario'
-                  ? 'bg-white text-slate-900 shadow-xs font-bold scale-[1.02]'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-white/50'
+                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
               }`}
             >
               <CalendarIcon className="w-3.5 h-3.5 text-blue-600" />
@@ -425,10 +465,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
 
             <button
               onClick={() => setActiveTab('progresso')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
                 activeTab === 'progresso'
-                  ? 'bg-white text-slate-900 shadow-xs font-bold scale-[1.02]'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-white/50'
+                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
               }`}
             >
               <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
@@ -437,10 +477,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
 
             <button
               onClick={() => setActiveTab('lista')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
                 activeTab === 'lista'
-                  ? 'bg-white text-slate-900 shadow-xs font-bold scale-[1.02]'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-white/50'
+                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
               }`}
             >
               <List className="w-3.5 h-3.5 text-purple-600" />
@@ -450,7 +490,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
 
           <button
             onClick={handleRunAutoLink}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200/90 rounded-full transition-all active:scale-95 cursor-pointer shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-300 rounded-xl transition-all active:scale-95 cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
             title="Percorrer pedidos sem cronograma e vincular automaticamente"
           >
             <Sparkles className="w-3.5 h-3.5 text-blue-600" />
@@ -492,22 +532,53 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
       {/* VIEW 2: VISÃO POR PROGRESSO */}
       {activeTab === 'progresso' && (
         <div className="space-y-4">
-          <div className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">
-                Progresso Físico dos Cronogramas de Abastecimento
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Acompanhamento percentual do fluxo operacional desde o pedido até a chegada no hospital
-              </p>
+          {/* Multi-Select Filter Bar */}
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-300 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <MultiSelect
+                options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
+                selected={filterUnits}
+                onChange={setFilterUnits}
+                placeholder="Todas as Unidades"
+                className="flex-1 sm:flex-initial sm:w-48"
+                showSearch={true}
+              />
+              <MultiSelect
+                options={programs.map(p => ({ id: p.nome, label: p.nome }))}
+                selected={filterPrograms}
+                onChange={setFilterPrograms}
+                placeholder="Todos os Programas"
+                className="flex-1 sm:flex-initial sm:w-44"
+              />
+              <MultiSelect
+                options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
+                selected={filterTypes}
+                onChange={setFilterTypes}
+                placeholder="Todos os Tipos"
+                className="flex-1 sm:flex-initial sm:w-40"
+              />
+              {(filterUnits.length > 0 || filterPrograms.length > 0 || filterTypes.length > 0) && (
+                <button
+                  onClick={() => {
+                    setFilterUnits([]);
+                    setFilterPrograms([]);
+                    setFilterTypes([]);
+                  }}
+                  className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-2xs whitespace-nowrap"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Limpar ({filterUnits.length + filterPrograms.length + filterTypes.length})</span>
+                </button>
+              )}
             </div>
-            <span className="font-mono text-xs font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full border border-blue-200 shadow-2xs self-start sm:self-auto">
-              {scheduleProgressList.length} cronogramas avaliados
+
+            <span className="font-mono text-xs font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full border border-blue-200 shadow-2xs">
+              {filteredScheduleProgressList.length} de {schedules.length} cronogramas
             </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {scheduleProgressList.map(({ sch, total, delivered, inTransport, inSeparation, awaiting, noPrazo, atencao, foraDoPrazo, progressPercent, currentMilestone }) => {
+            {filteredScheduleProgressList.map(({ sch, total, delivered, inTransport, inSeparation, awaiting, noPrazo, atencao, foraDoPrazo, progressPercent, currentMilestone }) => {
               let barColor = 'bg-blue-600';
               if (progressPercent >= 80) barColor = 'bg-emerald-600';
               else if (progressPercent >= 50) barColor = 'bg-purple-600';
@@ -669,25 +740,71 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
 
       {/* VIEW 3: TABELA DETALHADA DE CRONOGRAMAS */}
       {activeTab === 'lista' && (
-        <div className="bg-white rounded-3xl border border-slate-200/80 overflow-hidden shadow-xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50/80 border-b border-slate-200/80 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
-                <tr>
-                  <th className="py-3 px-4">Cronograma / Competência</th>
-                  <th className="py-3 px-3">Unidade & Programa</th>
-                  <th className="py-3 px-3">Tipo</th>
-                  <th className="py-3 px-3 text-center">1. Limite Solicitação</th>
-                  <th className="py-3 px-3 text-center">2. Limite Aprovação</th>
-                  <th className="py-3 px-3 text-center">3. Início Separação</th>
-                  <th className="py-3 px-3 text-center">4. Expedição</th>
-                  <th className="py-3 px-3 text-center font-bold text-emerald-800">5. Entrega Hospital</th>
-                  <th className="py-3 px-3 text-center">Progresso & Prazos (SLA)</th>
-                  <th className="py-3 px-3 text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-normal">
-                {schedules.map((sch) => {
+        <div className="space-y-4">
+          {/* Multi-Select Filter Bar */}
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-300 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <MultiSelect
+                options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
+                selected={filterUnits}
+                onChange={setFilterUnits}
+                placeholder="Todas as Unidades"
+                className="flex-1 sm:flex-initial sm:w-48"
+                showSearch={true}
+              />
+              <MultiSelect
+                options={programs.map(p => ({ id: p.nome, label: p.nome }))}
+                selected={filterPrograms}
+                onChange={setFilterPrograms}
+                placeholder="Todos os Programas"
+                className="flex-1 sm:flex-initial sm:w-44"
+              />
+              <MultiSelect
+                options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
+                selected={filterTypes}
+                onChange={setFilterTypes}
+                placeholder="Todos os Tipos"
+                className="flex-1 sm:flex-initial sm:w-40"
+              />
+              {(filterUnits.length > 0 || filterPrograms.length > 0 || filterTypes.length > 0) && (
+                <button
+                  onClick={() => {
+                    setFilterUnits([]);
+                    setFilterPrograms([]);
+                    setFilterTypes([]);
+                  }}
+                  className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-2xs whitespace-nowrap"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Limpar ({filterUnits.length + filterPrograms.length + filterTypes.length})</span>
+                </button>
+              )}
+            </div>
+
+            <span className="font-mono text-xs font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full border border-blue-200 shadow-2xs">
+              {filteredSchedulesList.length} de {schedules.length} cronogramas
+            </span>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-slate-200/80 overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50/80 border-b border-slate-200/80 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="py-3 px-4">Cronograma / Competência</th>
+                    <th className="py-3 px-3">Unidade & Programa</th>
+                    <th className="py-3 px-3">Tipo</th>
+                    <th className="py-3 px-3 text-center">1. Limite Solicitação</th>
+                    <th className="py-3 px-3 text-center">2. Limite Aprovação</th>
+                    <th className="py-3 px-3 text-center">3. Início Separação</th>
+                    <th className="py-3 px-3 text-center">4. Expedição</th>
+                    <th className="py-3 px-3 text-center font-bold text-emerald-800">5. Entrega Hospital</th>
+                    <th className="py-3 px-3 text-center">Progresso & Prazos (SLA)</th>
+                    <th className="py-3 px-3 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-normal">
+                  {filteredSchedulesList.map((sch) => {
                   const prog = scheduleProgressList.find(p => p.sch.id === sch.id);
                   return (
                   <tr key={sch.id} className="hover:bg-blue-50/40 transition-colors">
@@ -859,11 +976,12 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
             </table>
           </div>
         </div>
+        </div>
       )}
 
       {/* Modal: Novo / Editar Cronograma - Rounded 3xl */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900">
@@ -1285,7 +1403,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
           onNavigateDay={(newDay) => setDayOrdersModalConfig(prev => prev ? { ...prev, day: newDay } : null)}
           onSelectOrder={onSelectOrder}
           onOpenNewSchedule={handleOpenNewForDay}
-          initialOrderType={dayOrdersModalConfig.type || 'ALL'}
+          externalFilterOrderTypes={dayOrdersModalConfig.type ? [dayOrdersModalConfig.type] : filterTypes}
+          externalFilterUnits={filterUnits}
+          externalStageFilters={[]}
           onOpenScheduleOrders={(sch, filter) => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: filter || 'ALL' })}
         />
       )}

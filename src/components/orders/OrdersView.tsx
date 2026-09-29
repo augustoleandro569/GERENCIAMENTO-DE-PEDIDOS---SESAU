@@ -6,6 +6,7 @@ import { StatusBadge, TypeTag, DeadlineBadge, PriorityBadge, InlineStatusSelect,
 import { showToast } from '../common/Toast';
 import { exportOrdersToSpreadsheet } from '../../utils/spreadsheet';
 import { UnifiedCalendar } from '../schedules/UnifiedCalendar';
+import { MultiSelect } from '../common/MultiSelect';
 import { 
   Table, 
   Kanban, 
@@ -17,6 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ArrowRight,
+  ArrowLeft,
   CheckCircle,
   Truck,
   Boxes,
@@ -28,7 +30,10 @@ import {
   Sparkles,
   SlidersHorizontal,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Building2,
+  Package,
+  Calendar,
 } from 'lucide-react';
 
 interface OrdersViewProps {
@@ -51,12 +56,12 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   // View mode
   const [viewMode, setViewMode] = useState<'tabela' | 'kanban' | 'calendario'>('tabela');
 
-  // Search & Filters
+  // Search & Multi-Filters
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterUnit, setFilterUnit] = useState<string>(initialFilter?.unidade || 'ALL');
-  const [filterProgram, setFilterProgram] = useState<string>('ALL');
-  const [filterType, setFilterType] = useState<string>(initialFilter?.tipo || 'ALL');
-  const [quickFilter, setQuickFilter] = useState<'TODOS' | 'NO_PRAZO' | 'FORA_DO_PRAZO' | 'AGUARDANDO' | 'SEPARACAO' | 'TRANSPORTE' | 'ENTREGUE' | 'EMERGENCIAL' | 'ATRASADO'>('TODOS');
+  const [selectedUnits, setSelectedUnits] = useState<string[]>(initialFilter?.unidade ? [initialFilter.unidade] : []);
+  const [selectedPrograms, setSelectedPrograms] = useState<string[]>([]);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>(initialFilter?.tipo ? [initialFilter.tipo] : []);
+  const [selectedQuickFilters, setSelectedQuickFilters] = useState<string[]>([]);
 
   // Sorting
   const [sortField, setSortField] = useState<SortField>('criado_em');
@@ -110,21 +115,31 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     };
   }, [orders, schedulesMap, settings.horas_alerta_atencao]);
 
-  // Filtered orders
+  // Filtered orders with Multi-Select support
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
       const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
       const { situation } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
 
-      // Quick Chip Filter
-      if (quickFilter === 'NO_PRAZO' && (situation !== 'Dentro do prazo' && situation !== 'Concluído no prazo')) return false;
-      if (quickFilter === 'FORA_DO_PRAZO' && (situation !== 'Atrasado' && situation !== 'Concluído com atraso')) return false;
-      if (quickFilter === 'AGUARDANDO' && order.status_operacional !== 'Aguardando Aprovação' && order.status_operacional !== 'Rascunho') return false;
-      if (quickFilter === 'SEPARACAO' && order.status_operacional !== 'Em Separação' && order.status_operacional !== 'Aguardando Separação') return false;
-      if (quickFilter === 'TRANSPORTE' && order.status_operacional !== 'Em Transporte' && order.status_operacional !== 'Expedida') return false;
-      if (quickFilter === 'ENTREGUE' && order.status_operacional !== 'Entregue' && order.status_operacional !== 'Entregue Parcialmente') return false;
-      if (quickFilter === 'EMERGENCIAL' && order.tipo !== 'Emergencial' && order.tipo !== 'Falta') return false;
-      if (quickFilter === 'ATRASADO' && situation !== 'Atrasado') return false;
+      // Multi-quick-filter check: order must match at least one selected chip if any are selected
+      if (selectedQuickFilters.length > 0) {
+        const matchesAnyQuickFilter = selectedQuickFilters.some(qf => {
+          if (qf === 'NO_PRAZO') return situation === 'Dentro do prazo' || situation === 'Concluído no prazo';
+          if (qf === 'FORA_DO_PRAZO') return situation === 'Atrasado' || situation === 'Concluído com atraso';
+          if (qf === 'EMERGENCIAL') return order.tipo === 'Emergencial' || order.tipo === 'Falta';
+          if (qf === 'ATRASADO') return situation === 'Atrasado';
+
+          if (viewMode !== 'kanban') {
+            if (qf === 'AGUARDANDO') return order.status_operacional === 'Aguardando Aprovação' || order.status_operacional === 'Rascunho';
+            if (qf === 'SEPARACAO') return order.status_operacional === 'Em Separação' || order.status_operacional === 'Aguardando Separação';
+            if (qf === 'TRANSPORTE') return order.status_operacional === 'Em Transporte' || order.status_operacional === 'Expedida';
+            if (qf === 'ENTREGUE') return order.status_operacional === 'Entregue' || order.status_operacional === 'Entregue Parcialmente';
+          }
+          return false;
+        });
+
+        if (!matchesAnyQuickFilter) return false;
+      }
 
       // Search text
       if (searchTerm) {
@@ -132,17 +147,22 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         const matchesCode = order.codigo.toLowerCase().includes(query);
         const matchesUnit = order.unidade.toLowerCase().includes(query);
         const matchesRequester = order.solicitante.toLowerCase().includes(query);
-        const matchesCpf = order.cpf.toLowerCase().includes(query);
+        const matchesCpf = order.cpf ? order.cpf.toLowerCase().includes(query) : false;
         if (!matchesCode && !matchesUnit && !matchesRequester && !matchesCpf) return false;
       }
 
-      if (filterUnit !== 'ALL' && order.unidade !== filterUnit) return false;
-      if (filterProgram !== 'ALL' && order.programa !== filterProgram) return false;
-      if (filterType !== 'ALL' && order.tipo !== filterType) return false;
+      // Multi-select Units
+      if (selectedUnits.length > 0 && !selectedUnits.includes(order.unidade)) return false;
+
+      // Multi-select Programs
+      if (selectedPrograms.length > 0 && !selectedPrograms.includes(order.programa)) return false;
+
+      // Multi-select Types
+      if (selectedTypes.length > 0 && !selectedTypes.includes(order.tipo)) return false;
 
       return true;
     });
-  }, [orders, quickFilter, searchTerm, filterUnit, filterProgram, filterType, schedulesMap, settings.horas_alerta_atencao]);
+  }, [orders, selectedQuickFilters, searchTerm, selectedUnits, selectedPrograms, selectedTypes, schedulesMap, settings.horas_alerta_atencao, viewMode]);
 
   // Sorted orders
   const sortedOrders = useMemo(() => {
@@ -209,10 +229,10 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
   const handleClearFilters = () => {
     setSearchTerm('');
-    setQuickFilter('TODOS');
-    setFilterUnit('ALL');
-    setFilterProgram('ALL');
-    setFilterType('ALL');
+    setSelectedUnits([]);
+    setSelectedPrograms([]);
+    setSelectedTypes([]);
+    setSelectedQuickFilters([]);
     setCurrentPage(1);
   };
 
@@ -221,161 +241,281 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     showToast('success', 'Planilha exportada', `${sortedOrders.length} registros exportados.`);
   };
 
-  const kanbanColumns: OrderStatus[] = [
-    'Aguardando Aprovação',
-    'Aprovada',
-    'Aguardando Separação',
-    'Em Separação',
-    'Aguardando Conferência',
-    'Em Conferência',
-    'Expedida',
-    'Em Transporte',
-    'Entregue',
+  const [draggedOrderId, setDraggedOrderId] = useState<string | null>(null);
+  const [dragOverColId, setDragOverColId] = useState<string | null>(null);
+
+  interface KanbanColumnConfig {
+    id: string;
+    title: string;
+    statuses: OrderStatus[];
+    advanceTo?: OrderStatus;
+    retroactTo?: OrderStatus;
+    headerBorder: string;
+    badgeBg: string;
+    badgeText: string;
+    dotColor: string;
+  }
+
+  const kanbanPipeline: KanbanColumnConfig[] = [
+    {
+      id: 'col-aguardando',
+      title: 'Aguardando Aprovação',
+      statuses: ['Aguardando Aprovação', 'Rascunho'],
+      advanceTo: 'Aguardando Separação',
+      headerBorder: 'border-amber-300',
+      badgeBg: 'bg-amber-100 border-amber-300',
+      badgeText: 'text-amber-800',
+      dotColor: 'bg-amber-500',
+    },
+    {
+      id: 'col-aprovada',
+      title: 'Aguardando Separação',
+      statuses: ['Aguardando Separação', 'Aprovada'],
+      advanceTo: 'Em Separação',
+      retroactTo: 'Aguardando Aprovação',
+      headerBorder: 'border-purple-300',
+      badgeBg: 'bg-purple-100 border-purple-300',
+      badgeText: 'text-purple-800',
+      dotColor: 'bg-purple-500',
+    },
+    {
+      id: 'col-separacao',
+      title: 'Em Separação',
+      statuses: ['Em Separação'],
+      advanceTo: 'Aguardando Conferência',
+      retroactTo: 'Aguardando Separação',
+      headerBorder: 'border-indigo-300',
+      badgeBg: 'bg-indigo-100 border-indigo-300',
+      badgeText: 'text-indigo-800',
+      dotColor: 'bg-indigo-500',
+    },
+    {
+      id: 'col-aguardando-conf',
+      title: 'Aguardando Conferência',
+      statuses: ['Aguardando Conferência'],
+      advanceTo: 'Em Conferência',
+      retroactTo: 'Em Separação',
+      headerBorder: 'border-sky-300',
+      badgeBg: 'bg-sky-100 border-sky-300',
+      badgeText: 'text-sky-800',
+      dotColor: 'bg-sky-500',
+    },
+    {
+      id: 'col-conferencia',
+      title: 'Em Conferência',
+      statuses: ['Em Conferência'],
+      advanceTo: 'Expedida',
+      retroactTo: 'Aguardando Conferência',
+      headerBorder: 'border-teal-300',
+      badgeBg: 'bg-teal-100 border-teal-300',
+      badgeText: 'text-teal-800',
+      dotColor: 'bg-teal-500',
+    },
+    {
+      id: 'col-expedida',
+      title: 'Expedida',
+      statuses: ['Expedida'],
+      advanceTo: 'Em Transporte',
+      retroactTo: 'Em Conferência',
+      headerBorder: 'border-cyan-300',
+      badgeBg: 'bg-cyan-100 border-cyan-300',
+      badgeText: 'text-cyan-800',
+      dotColor: 'bg-cyan-500',
+    },
+    {
+      id: 'col-transporte',
+      title: 'Em Transporte',
+      statuses: ['Em Transporte'],
+      advanceTo: 'Entregue',
+      retroactTo: 'Expedida',
+      headerBorder: 'border-orange-300',
+      badgeBg: 'bg-orange-100 border-orange-300',
+      badgeText: 'text-orange-800',
+      dotColor: 'bg-orange-500',
+    },
+    {
+      id: 'col-entregue',
+      title: 'Entregue',
+      statuses: ['Entregue', 'Entregue Parcialmente'],
+      retroactTo: 'Em Transporte',
+      headerBorder: 'border-emerald-300',
+      badgeBg: 'bg-emerald-100 border-emerald-300',
+      badgeText: 'text-emerald-800',
+      dotColor: 'bg-emerald-500',
+    },
+    {
+      id: 'col-cancelada',
+      title: 'Cancelada / Rejeitada',
+      statuses: ['Rejeitada', 'Cancelada'],
+      retroactTo: 'Aguardando Aprovação',
+      headerBorder: 'border-rose-300',
+      badgeBg: 'bg-rose-100 border-rose-300',
+      badgeText: 'text-rose-800',
+      dotColor: 'bg-rose-500',
+    },
   ];
 
   return (
     <div className="space-y-4">
-      {/* Top Controls Bar - Rounded 3xl Header Container */}
-      <div className="bg-white/80 backdrop-blur-md p-3 sm:p-4 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center shadow-xs">
+      {/* Top Controls Bar - Crisp, Solid Header Container */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-300 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
             <Zap className="w-5 h-5" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-slate-900 tracking-tight">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base font-bold text-slate-950 tracking-tight whitespace-nowrap">
                 Solicitações & Pedidos
               </h2>
-              <span className="text-[11px] font-mono text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200/70 font-bold">
+              <span className="text-[11px] font-mono text-blue-800 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200 font-bold shrink-0">
                 {filteredOrders.length} {filteredOrders.length === 1 ? 'item' : 'itens'}
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-500 font-medium mt-0.5 truncate max-w-xl">
               Clique no status para alterar em 1 clique ou clique na linha para abrir a linha do tempo completa
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Segmented View Switcher - Rounded Full */}
-          <div className="flex items-center p-1 bg-slate-100/90 rounded-full border border-slate-200/50 shadow-inner text-xs">
+        <div className="flex items-center gap-2 shrink-0 self-start md:self-auto">
+          {/* Segmented View Switcher - Crisp Segmented Control */}
+          <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-300 text-xs shadow-2xs">
             <button
               onClick={() => setViewMode('tabela')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
                 viewMode === 'tabela'
-                  ? 'bg-white text-slate-900 shadow-xs font-bold scale-[1.02]'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-white/50'
+                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
               }`}
             >
-              <Table className="w-3.5 h-3.5 text-blue-600" />
+              <Table className="w-3.5 h-3.5 text-blue-600 shrink-0" />
               <span>Tabela</span>
             </button>
             <button
               onClick={() => setViewMode('kanban')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
                 viewMode === 'kanban'
-                  ? 'bg-white text-slate-900 shadow-xs font-bold scale-[1.02]'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-white/50'
+                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
               }`}
             >
-              <Kanban className="w-3.5 h-3.5 text-purple-600" />
+              <Kanban className="w-3.5 h-3.5 text-purple-600 shrink-0" />
               <span>Kanban</span>
             </button>
             <button
               onClick={() => setViewMode('calendario')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
                 viewMode === 'calendario'
-                  ? 'bg-white text-slate-900 shadow-xs font-bold scale-[1.02]'
-                  : 'text-slate-500 hover:text-slate-900 hover:bg-white/50'
+                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
               }`}
             >
-              <CalendarIcon className="w-3.5 h-3.5 text-emerald-600" />
+              <CalendarIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               <span>Calendário</span>
             </button>
           </div>
 
           <button
             onClick={() => handleExport('xlsx')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 hover:shadow-xs active:scale-95 border border-slate-200/90 rounded-full transition-all cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-800 bg-white hover:bg-slate-50 hover:shadow-xs active:scale-95 border border-slate-300 rounded-xl transition-all cursor-pointer shadow-2xs whitespace-nowrap"
             title="Exportar para Excel"
           >
-            <Download className="w-3.5 h-3.5 text-emerald-600" />
+            <Download className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
             <span className="hidden sm:inline">Excel</span>
           </button>
         </div>
       </div>
 
-      {/* Slender Rounded Filter Bar */}
-      <div className="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-center gap-2.5">
-        <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+      {/* Crisp Solid Filter Bar - Perfectly bounded with zero horizontal overflow */}
+      <div className="bg-white p-3.5 rounded-2xl border border-slate-300 shadow-xs flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 w-full">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={searchTerm}
             onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
             placeholder="Buscar por código, unidade, solicitante ou CPF..."
-            className="w-full pl-9 pr-8 py-2 text-xs bg-slate-50/70 hover:bg-slate-50 border border-slate-200/90 rounded-full focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 font-medium"
+            className="w-full pl-9 pr-8 py-2 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all text-slate-900 placeholder:text-slate-400 font-medium shadow-2xs"
           />
           {searchTerm && (
             <button
               onClick={() => setSearchTerm('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center text-[10px] hover:bg-slate-300 transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] hover:bg-slate-300 transition-colors cursor-pointer"
             >
               ✕
             </button>
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
-          <select
-            value={filterUnit}
-            onChange={(e) => { setFilterUnit(e.target.value); setCurrentPage(1); }}
-            className="text-xs bg-slate-50/80 hover:bg-slate-100/60 border border-slate-200/90 rounded-full px-3 py-2 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium transition-all cursor-pointer"
-          >
-            <option value="ALL">Todas as Unidades ({units.length})</option>
-            {units.map(u => (
-              <option key={u.id} value={u.sigla}>{u.sigla} - {u.nome.slice(0, 24)}</option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+          {/* Multi-Select Unidades */}
+          <MultiSelect
+            options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
+            selected={selectedUnits}
+            onChange={(next) => { setSelectedUnits(next); setCurrentPage(1); }}
+            placeholder="Todas as Unidades"
+            className="flex-1 sm:flex-initial sm:w-48"
+            showSearch={true}
+          />
 
-          <select
-            value={filterProgram}
-            onChange={(e) => { setFilterProgram(e.target.value); setCurrentPage(1); }}
-            className="text-xs bg-slate-50/80 hover:bg-slate-100/60 border border-slate-200/90 rounded-full px-3 py-2 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium transition-all cursor-pointer"
-          >
-            <option value="ALL">Todos os Programas</option>
-            {programs.map(p => (
-              <option key={p.id} value={p.nome}>{p.nome}</option>
-            ))}
-          </select>
+          {/* Multi-Select Programas */}
+          <MultiSelect
+            options={programs.map(p => ({ id: p.nome, label: p.nome }))}
+            selected={selectedPrograms}
+            onChange={(next) => { setSelectedPrograms(next); setCurrentPage(1); }}
+            placeholder="Todos os Programas"
+            className="flex-1 sm:flex-initial sm:w-44"
+          />
 
-          <select
-            value={filterType}
-            onChange={(e) => { setFilterType(e.target.value); setCurrentPage(1); }}
-            className="text-xs bg-slate-50/80 hover:bg-slate-100/60 border border-slate-200/90 rounded-full px-3 py-2 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium transition-all cursor-pointer"
-          >
-            <option value="ALL">Todos os Tipos</option>
-            {orderTypes.map(t => (
-              <option key={t.id} value={t.nome}>{t.nome}</option>
-            ))}
-          </select>
+          {/* Multi-Select Tipos */}
+          <MultiSelect
+            options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
+            selected={selectedTypes}
+            onChange={(next) => { setSelectedTypes(next); setCurrentPage(1); }}
+            placeholder="Todos os Tipos"
+            className="flex-1 sm:flex-initial sm:w-40"
+          />
 
-          {(filterUnit !== 'ALL' || filterProgram !== 'ALL' || filterType !== 'ALL' || quickFilter !== 'TODOS' || searchTerm) && (
+          {(selectedUnits.length > 0 || selectedPrograms.length > 0 || selectedTypes.length > 0 || selectedQuickFilters.length > 0 || searchTerm) && (
             <button
-              onClick={handleClearFilters}
-              className="text-xs text-rose-600 hover:text-rose-800 font-semibold px-3 py-1.5 rounded-full bg-rose-50 hover:bg-rose-100 active:scale-95 transition-all cursor-pointer flex items-center gap-1"
+              onClick={() => {
+                setSelectedUnits([]);
+                setSelectedPrograms([]);
+                setSelectedTypes([]);
+                setSelectedQuickFilters([]);
+                setSearchTerm('');
+                setCurrentPage(1);
+              }}
+              className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-2xs whitespace-nowrap shrink-0"
+              title="Limpar todos os filtros ativos"
             >
               <RotateCcw className="w-3 h-3" />
-              <span>Limpar</span>
+              <span>Limpar ({selectedUnits.length + selectedPrograms.length + selectedTypes.length + selectedQuickFilters.length})</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Interactive Rounded Quick Access Filter Pills */}
+      {/* Interactive Rounded Quick Access Multi-Filter Pills */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
+        <button
+          onClick={() => { setSelectedQuickFilters([]); setCurrentPage(1); }}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all duration-150 cursor-pointer active:scale-95 ${
+            selectedQuickFilters.length === 0
+              ? 'bg-slate-900 text-white font-semibold shadow-xs scale-[1.02]'
+              : 'bg-white text-slate-600 border border-slate-200/90 hover:border-slate-400 hover:bg-slate-50'
+          }`}
+        >
+          <span>Todos</span>
+          <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+            selectedQuickFilters.length === 0 ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+          }`}>
+            {quickFilterCounts.todos}
+          </span>
+        </button>
+
         {[
-          { id: 'TODOS', label: 'Todos', count: quickFilterCounts.todos, color: 'border-slate-300' },
           { id: 'NO_PRAZO', label: '🟢 No Prazo', count: quickFilterCounts.noPrazo, color: 'border-emerald-300' },
           { id: 'FORA_DO_PRAZO', label: '🔴 Fora do Prazo', count: quickFilterCounts.foraDoPrazo, color: 'border-rose-400', isAlert: true },
           { id: 'AGUARDANDO', label: 'Aguardando Aprovação', count: quickFilterCounts.aguardando, color: 'border-amber-300' },
@@ -384,11 +524,20 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           { id: 'ENTREGUE', label: 'Entregues', count: quickFilterCounts.entregue, color: 'border-emerald-300' },
           { id: 'EMERGENCIAL', label: 'Emergenciais / Falta', count: quickFilterCounts.emergencial, color: 'border-rose-300', isUrgent: true },
         ].map(chip => {
-          const isSelected = quickFilter === chip.id;
+          const isSelected = selectedQuickFilters.includes(chip.id);
+          const handleToggleChip = () => {
+            if (isSelected) {
+              setSelectedQuickFilters(prev => prev.filter(c => c !== chip.id));
+            } else {
+              setSelectedQuickFilters(prev => [...prev, chip.id]);
+            }
+            setCurrentPage(1);
+          };
+
           return (
             <button
               key={chip.id}
-              onClick={() => { setQuickFilter(chip.id as typeof quickFilter); setCurrentPage(1); }}
+              onClick={handleToggleChip}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all duration-150 cursor-pointer active:scale-95 ${
                 isSelected
                   ? 'bg-slate-900 text-white font-semibold shadow-xs scale-[1.02]'
@@ -617,77 +766,206 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         </div>
       )}
 
-      {/* VIEW 2: KANBAN - Rounded Columns and Cards */}
+      {/* VIEW 2: KANBAN - Rounded Columns and Cards with Advance, Retroact and Drag-and-Drop */}
       {viewMode === 'kanban' && (
         <div className="overflow-x-auto pb-4">
-          <div className="flex gap-3 min-w-[1350px]">
-            {kanbanColumns.map((colStatus) => {
-              const colOrders = sortedOrders.filter(o => o.status_operacional === colStatus);
+          <div className="flex gap-4 min-w-[1600px]">
+            {kanbanPipeline.map((col) => {
+              const colOrders = sortedOrders.filter(o => col.statuses.includes(o.status_operacional));
+              const isDragOver = dragOverColId === col.id;
+
               return (
-                <div key={colStatus} className="w-72 shrink-0 bg-slate-100/70 rounded-3xl p-3 border border-slate-200/80 flex flex-col max-h-[75vh]">
-                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/80">
-                    <span className="text-xs font-bold text-slate-800 truncate" title={colStatus}>
-                      {colStatus}
-                    </span>
-                    <span className="font-mono text-[11px] bg-white text-slate-700 px-2.5 py-0.5 rounded-full font-bold border border-slate-200/80 shadow-2xs">
+                <div 
+                  key={col.id} 
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (dragOverColId !== col.id) setDragOverColId(col.id);
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverColId === col.id) setDragOverColId(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOverColId(null);
+                    const droppedOrderId = e.dataTransfer.getData('text/plain') || draggedOrderId;
+                    if (!droppedOrderId) return;
+                    const order = orders.find(o => o.id === droppedOrderId);
+                    if (!order) return;
+                    if (col.statuses.includes(order.status_operacional)) return;
+
+                    const targetStatus = col.statuses[0];
+                    const currentIdx = kanbanPipeline.findIndex(c => c.statuses.includes(order.status_operacional));
+                    const targetIdx = kanbanPipeline.findIndex(c => c.id === col.id);
+                    const isBackwards = targetIdx < currentIdx;
+
+                    updateOperationalStatus(
+                      order.id, 
+                      targetStatus, 
+                      currentUser, 
+                      isBackwards ? `Retrocesso Kanban para ${targetStatus}` : `Avanço Kanban para ${targetStatus}`
+                    );
+                    showToast(
+                      isBackwards ? 'info' : 'success', 
+                      `${order.codigo} ${isBackwards ? 'retroagido' : 'avançado'}`, 
+                      `Movido para a coluna: ${col.title}`
+                    );
+                    setDraggedOrderId(null);
+                  }}
+                  className={`w-80 shrink-0 rounded-3xl p-3 border flex flex-col max-h-[78vh] transition-all duration-150 ${
+                    isDragOver 
+                      ? 'bg-blue-50/90 border-blue-400 ring-2 ring-blue-300 shadow-md' 
+                      : 'bg-slate-100/75 border-slate-200/90'
+                  }`}
+                >
+                  {/* Column Header */}
+                  <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-200/80">
+                    <div className="flex items-center gap-2 min-w-0 pr-1">
+                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${col.dotColor}`} />
+                      <span className="text-xs font-bold text-slate-800 truncate" title={col.title}>
+                        {col.title}
+                      </span>
+                    </div>
+                    <span className={`font-mono text-[11px] px-2.5 py-0.5 rounded-full font-bold border shadow-2xs shrink-0 ${col.badgeBg} ${col.badgeText}`}>
                       {colOrders.length}
                     </span>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                    {colOrders.slice(0, 45).map((order) => {
+                  {/* Cards Scroll Container */}
+                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                    {colOrders.map((order) => {
                       const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
-                      const { situation, label } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
+                      const { situation, label, targetDate } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
+                      const isBeingDragged = draggedOrderId === order.id;
+
                       return (
                         <div
                           key={order.id}
-                          className="bg-white p-3 rounded-2xl border border-slate-200/90 hover:border-blue-400 hover:shadow-md hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-150 cursor-pointer group"
+                          draggable={currentUser.role !== 'VIEWER'}
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('text/plain', order.id);
+                            setDraggedOrderId(order.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedOrderId(null);
+                            setDragOverColId(null);
+                          }}
+                          className={`bg-white p-3.5 rounded-2xl border border-slate-200/90 hover:border-blue-400 hover:shadow-md transition-all duration-150 cursor-pointer group ${
+                            isBeingDragged ? 'opacity-40 scale-95 border-dashed border-blue-500' : ''
+                          }`}
                           onClick={() => onSelectOrder(order)}
                         >
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="font-mono text-xs font-bold text-blue-700 group-hover:underline">
-                              {order.codigo}
-                            </span>
+                          {/* Top Row: Code + Origin + Type Tag */}
+                          <div className="flex items-center justify-between gap-1.5 mb-2.5">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="font-mono text-xs font-bold text-blue-700 group-hover:underline truncate">
+                                {order.codigo}
+                              </span>
+                              {order.origem === 'MANUAL' && (
+                                <span className="text-[9px] font-mono font-bold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded-md border border-purple-200 shrink-0">
+                                  MANUAL
+                                </span>
+                              )}
+                            </div>
                             <TypeTag type={order.tipo} />
                           </div>
 
-                          <div className="text-xs font-semibold text-slate-800 mb-1">
-                            {order.unidade} · <span className="text-slate-400 font-normal">{order.programa}</span>
+                          {/* Unit & Program Row */}
+                          <div className="flex items-center justify-between gap-2 mb-2.5">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span className="text-xs font-bold text-slate-900 truncate">
+                                {order.unidade}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-500 truncate max-w-[125px] font-medium bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-100 shrink-0">
+                              {order.programa}
+                            </span>
                           </div>
 
-                          <div className="flex items-center justify-between text-[11px] text-slate-400 mb-2 font-mono">
-                            <span>{order.quantidade_itens} itens</span>
-                            <span>{formatShortDate(order.criado_em)}</span>
+                          {/* Metrics Sub-Card: Itens and Date */}
+                          <div className="grid grid-cols-2 gap-2 p-2 bg-slate-50/80 rounded-xl border border-slate-100 mb-2.5 text-[11px]">
+                            <div className="flex items-center gap-1.5 text-slate-700">
+                              <Package className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span className="font-mono font-bold text-slate-800">{order.quantidade_itens}</span>
+                              <span className="text-slate-400 text-[10px]">itens</span>
+                            </div>
+                            <div className="flex items-center justify-end gap-1.5 text-slate-500 font-mono text-[10px]">
+                              <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>{formatShortDate(order.data_inicio || order.data_solicitacao || order.criado_em)}</span>
+                            </div>
                           </div>
 
-                          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                          {/* SLA / Deadline Row */}
+                          <div className="flex items-center justify-between text-[11px] mb-3">
                             <DeadlineBadge situation={situation} label={label} />
-                            
-                            {currentUser.role !== 'VIEWER' && colStatus !== 'Entregue' && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const nextIdx = kanbanColumns.indexOf(colStatus) + 1;
-                                  if (nextIdx < kanbanColumns.length) {
-                                    const nextSt = kanbanColumns[nextIdx];
-                                    updateOperationalStatus(order.id, nextSt, currentUser, 'Avanço Kanban');
-                                    showToast('success', `${order.codigo} avançado`, `Novo status: ${nextSt}`);
-                                  }
-                                }}
-                                className="text-[11px] text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 px-2 py-0.5 rounded-full hover:bg-blue-50 transition-colors"
-                                title="Avançar para próxima etapa"
-                              >
-                                <span>Avançar</span>
-                                <ArrowRight className="w-3 h-3" />
-                              </button>
+                            {targetDate && situation !== 'Fora do cronograma' && (
+                              <span className="text-[10px] font-mono text-slate-400">
+                                Prazo: {formatShortDate(targetDate)}
+                              </span>
                             )}
                           </div>
+
+                          {/* Card Footer: Balanced Action Buttons Bar */}
+                          {currentUser.role !== 'VIEWER' && (col.retroactTo || col.advanceTo) && (
+                            <div 
+                              className="pt-2.5 border-t border-slate-100 flex items-center gap-2"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {/* Botão Retroagir / Voltar */}
+                              {col.retroactTo && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const prevSt = col.retroactTo!;
+                                    updateOperationalStatus(
+                                      order.id, 
+                                      prevSt, 
+                                      currentUser, 
+                                      `Retrocesso Kanban para ${prevSt}`
+                                    );
+                                    showToast('info', `${order.codigo} retroagido`, `Retornado para: ${prevSt}`);
+                                  }}
+                                  className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-semibold text-slate-600 bg-slate-100/90 hover:bg-amber-50 hover:text-amber-800 border border-slate-200/90 hover:border-amber-300 transition-all cursor-pointer shadow-2xs active:scale-95 ${
+                                    col.advanceTo ? 'flex-1' : 'w-full'
+                                  }`}
+                                  title={`Retroagir para: ${col.retroactTo}`}
+                                >
+                                  <ArrowLeft className="w-3 h-3 text-slate-400" />
+                                  <span>Voltar</span>
+                                </button>
+                              )}
+
+                              {/* Botão Avançar */}
+                              {col.advanceTo && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const nextSt = col.advanceTo!;
+                                    updateOperationalStatus(
+                                      order.id, 
+                                      nextSt, 
+                                      currentUser, 
+                                      `Avanço Kanban para ${nextSt}`
+                                    );
+                                    showToast('success', `${order.codigo} avançado`, `Avançou para: ${nextSt}`);
+                                  }}
+                                  className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 transition-all cursor-pointer shadow-2xs active:scale-95 ${
+                                    col.retroactTo ? 'flex-1' : 'w-full'
+                                  }`}
+                                  title={`Avançar para: ${col.advanceTo}`}
+                                >
+                                  <span>Avançar</span>
+                                  <ArrowRight className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
 
                     {colOrders.length === 0 && (
-                      <div className="p-4 text-center text-xs text-slate-400 italic">
+                      <div className="p-6 text-center text-xs text-slate-400 italic bg-white/40 rounded-2xl border border-dashed border-slate-200">
                         Nenhum pedido nesta etapa.
                       </div>
                     )}
@@ -703,7 +981,10 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       {viewMode === 'calendario' && (
         <UnifiedCalendar 
           onSelectOrder={onSelectOrder} 
-          filterUnitProp={filterUnit !== 'ALL' ? filterUnit : undefined} 
+          ordersProp={filteredOrders}
+          selectedUnitsProp={selectedUnits}
+          selectedOrderTypesProp={selectedTypes}
+          searchTermProp={searchTerm}
         />
       )}
     </div>

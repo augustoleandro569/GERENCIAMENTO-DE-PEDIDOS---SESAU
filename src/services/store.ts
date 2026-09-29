@@ -165,6 +165,13 @@ class AppStore {
             this.save(STORAGE_KEYS.UNITS, this.units);
             this.notify();
           }
+        },
+        (remoteImports) => {
+          if (remoteImports && remoteImports.length > 0) {
+            this.importRecords = remoteImports;
+            this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
+            this.notify();
+          }
         }
       );
     }, 150);
@@ -268,7 +275,7 @@ class AppStore {
   }
 
   // Getters
-  public getOrders(): Order[] { return this.orders; }
+  public getOrders(): Order[] { return [...this.orders]; }
   public getSchedules(): Schedule[] { return this.schedules; }
   public getUnits(): HospitalUnit[] { return this.units; }
   public getPrograms(): Program[] { return this.programs; }
@@ -415,11 +422,15 @@ class AppStore {
 
     let eventType = `Alteração para ${newStatus}`;
 
-    if (newStatus === 'Aguardando Separação' || newStatus === 'Aprovada') {
+    if (observacao?.toLowerCase().includes('retro')) {
+      eventType = `Retrocesso para ${newStatus}`;
+    } else if (newStatus === 'Aguardando Separação' || newStatus === 'Aprovada') {
       eventType = 'Aprovação';
       updates.validador = user;
       updates.validada_em = dateFormatted;
       if (!current.data_aprovacao) updates.data_aprovacao = new Date().toISOString().split('T')[0];
+    } else if (newStatus === 'Aguardando Aprovação' || newStatus === 'Rascunho') {
+      eventType = 'Retorno para Aguardando Aprovação';
     } else if (newStatus === 'Em Separação') {
       eventType = 'Separação Iniciada';
       updates.separador = user;
@@ -466,13 +477,17 @@ class AppStore {
       ? `${current.historico_original}\n${histLine}`
       : histLine;
 
-    this.orders[orderIndex] = {
+    const updatedOrder = {
       ...current,
       ...updates,
     };
 
+    const updatedOrders = [...this.orders];
+    updatedOrders[orderIndex] = updatedOrder;
+    this.orders = updatedOrders;
+
     this.save(STORAGE_KEYS.ORDERS, this.orders);
-    dbSync.saveOrder(this.orders[orderIndex]);
+    dbSync.saveOrder(updatedOrder);
 
     this.addAuditLog({
       pedido_id: orderId,
@@ -525,8 +540,8 @@ class AppStore {
     this.notify();
   }
 
-  // Process Import idempotently
-  public processImport(analysis: ImportAnalysis, responsavel?: string | UserProfile): ImportRecord {
+  // Process Import idempotently and feed the database directly
+  public async processImport(analysis: ImportAnalysis, responsavel?: string | UserProfile): Promise<ImportRecord> {
     const now = new Date().toISOString();
     const importId = `imp-${Date.now()}`;
     const userNome = typeof responsavel === 'object' && responsavel !== null ? responsavel.nome : (responsavel || this.currentUser.nome);
@@ -535,6 +550,9 @@ class AppStore {
     let updateCount = 0;
     let unchangedCount = 0;
     let errorCount = 0;
+
+    const affectedOrders: Order[] = [];
+    const newAuditLogs: AuditLog[] = [];
 
     for (const item of analysis.items) {
       if (item.action === 'ERRO' || !item.row) {
@@ -598,6 +616,7 @@ class AppStore {
         };
 
         this.orders.unshift(newOrder);
+        affectedOrders.push(newOrder);
       } else if (item.action === 'ATUALIZAR') {
         const current = this.orders.find(o => o.codigo === row.codigo);
         if (!current) continue;
@@ -605,7 +624,7 @@ class AppStore {
         let hasChanged = false;
 
         if (current.status_origem !== row.status) {
-          this.addAuditLog({
+          const audit = this.addAuditLog({
             pedido_id: current.id,
             codigo_pedido: current.codigo,
             usuario: `Importação (${userNome})`,
@@ -614,6 +633,8 @@ class AppStore {
             valor_anterior: current.status_origem,
             novo_valor: row.status,
           });
+          newAuditLogs.push(audit);
+
           current.status_origem = (row.status as OrderStatus);
           current.status_operacional = (row.status as OrderStatus);
           hasChanged = true;
@@ -653,6 +674,7 @@ class AppStore {
           current.atualizado_em = now;
           current.importacao_id = importId;
           updateCount++;
+          affectedOrders.push(current);
         } else {
           unchangedCount++;
         }
@@ -678,15 +700,19 @@ class AppStore {
     this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
     this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
     
-    // Push new records to Supabase & Firestore in background
-    dbSync.pushAllToSupabase(this.orders, this.schedules, this.units).catch(e => console.warn(e));
+    // DIRECTLY FEED THE DATABASE (Firestore & Supabase)
+    try {
+      await dbSync.saveImportedData(affectedOrders, record, newAuditLogs);
+    } catch (e) {
+      console.warn('Erro ao alimentar banco de dados na importação:', e);
+    }
 
     this.notify();
     return record;
   }
 
   // Audit logging helper
-  private addAuditLog(entry: Omit<AuditLog, 'id'>) {
+  private addAuditLog(entry: Omit<AuditLog, 'id'>): AuditLog {
     const log: AuditLog = {
       ...entry,
       id: `aud-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
@@ -697,6 +723,7 @@ class AppStore {
     }
     this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
     dbSync.saveAuditLog(log);
+    return log;
   }
 
   // Schedule CRUD
@@ -929,6 +956,15 @@ class AppStore {
         if (clearSchedule) {
           order.cronograma_id = null;
           order.cronograma_vinculo = 'NENHUM';
+          order.data_prevista_entrega = undefined;
+          order.data_inicio_separacao = undefined;
+          order.data_expedicao = undefined;
+          order.data_inicio = undefined;
+          order.data_aprovacao = undefined;
+          order.data_solicitacao = undefined;
+          order.validada_em = undefined;
+          order.separado_em = undefined;
+          order.expedido_em = undefined;
         }
 
         if (clearStageDates) {
@@ -1027,6 +1063,11 @@ class AppStore {
     order.data_inicio_separacao = undefined;
     order.data_expedicao = undefined;
     order.data_inicio = undefined;
+    order.data_aprovacao = undefined;
+    order.data_solicitacao = undefined;
+    order.validada_em = undefined;
+    order.separado_em = undefined;
+    order.expedido_em = undefined;
     order.atualizado_em = nowIso;
 
     const unlinkedEvent: OrderEvent = {

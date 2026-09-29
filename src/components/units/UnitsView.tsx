@@ -112,23 +112,24 @@ export const UnitsView: React.FC = () => {
       </div>
 
       {/* Search & Filter Toolbar */}
-      <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center gap-3 shadow-xs">
-        <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+      <div className="bg-white p-3.5 rounded-2xl border border-slate-300 flex flex-col sm:flex-row items-center gap-3 shadow-xs w-full">
+        <div className="relative flex-1 w-full min-w-[200px]">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Pesquisar por Sigla (ex: HGE, HMA), Nome do Hospital ou Município..."
-            className="w-full pl-9 pr-4 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/30 font-medium"
           />
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
           <select
             value={filterType}
             onChange={(e) => setFilterType(e.target.value)}
-            className="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 font-medium"
+            className="w-full sm:w-auto text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 transition-all cursor-pointer shadow-2xs truncate"
+            title="Filtrar por Tipo de Unidade"
           >
             <option value="ALL">Todos os Tipos de Unidade</option>
             <option value="Hospital">Hospital</option>
@@ -202,7 +203,7 @@ export const UnitsView: React.FC = () => {
 
       {/* CREATE / EDIT UNIT MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60">
           <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95">
             <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900">

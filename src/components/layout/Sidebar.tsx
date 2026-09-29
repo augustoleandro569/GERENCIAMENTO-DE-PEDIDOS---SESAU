@@ -83,12 +83,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, onSelectModule }
       {/* Sidebar Header */}
       <div className="p-4 border-b border-slate-800">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-sm shadow-md">
-            SES
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 flex items-center justify-center text-white shadow-md border border-blue-400/20 shrink-0">
+            <svg viewBox="0 0 36 36" fill="none" className="w-4 h-4 text-white">
+              <path d="M15 7C15 6.44772 15.4477 6 16 6H20C20.5523 6 21 6.44772 21 7V13H27C27.5523 13 28 13.4477 28 14V18C28 18.5523 27.5523 19 27 19H21V25C21 25.5523 20.5523 26 20 26H16C15.4477 26 15 25.5523 15 25V19H9C8.44772 19 8 18.5523 8 18V14C8 13.4477 8.44772 13 9 13H15V7Z" fill="white" />
+              <circle cx="18" cy="16" r="3.2" fill="#10B981" />
+              <path d="M16.5 16L17.5 17.2L19.5 14.8" stroke="white" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </div>
           <div>
-            <div className="text-xs font-bold text-white tracking-wide">
-              SESAU ALAGOAS
+            <div className="text-xs font-bold text-white tracking-wide flex items-center gap-1.5">
+              <span>SESAU ALAGOAS</span>
+              <span className="text-[8px] font-mono px-1 py-0.2 rounded bg-blue-950 text-blue-300 border border-blue-800">OFICIAL</span>
             </div>
             <div className="text-[10px] text-slate-400">
               Logística & Suprimentos

@@ -1,17 +1,15 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../../hooks/useStore';
 import { Order, Schedule, OrderStatus } from '../../types';
 import { formatShortDate, formatDate } from '../../utils/dateUtils';
 import { calculateDeadlineSituation } from '../../utils/dateUtils';
-import { StatusBadge, TypeTag, DeadlineBadge, PriorityBadge, InlineStatusSelect } from '../common/StatusBadge';
+import { TypeTag, DeadlineBadge, InlineStatusSelect } from '../common/StatusBadge';
 import { exportOrdersToSpreadsheet } from '../../utils/spreadsheet';
 import { showToast } from '../common/Toast';
+import { StageDateFilter } from './UnifiedCalendar';
 import { 
   X, 
-  Calendar, 
   CalendarCheck, 
-  Search, 
-  Filter, 
   Download, 
   ExternalLink, 
   ChevronLeft, 
@@ -19,19 +17,12 @@ import {
   Link2, 
   Unlink, 
   Boxes, 
-  Truck, 
-  CheckCircle2, 
-  Clock, 
-  FileText, 
   AlertCircle, 
   Package, 
   Check, 
   Zap, 
-  Maximize2,
-  CalendarDays,
   Sparkles,
-  Plus,
-  RefreshCw
+  Plus
 } from 'lucide-react';
 
 interface DayOrdersModalProps {
@@ -43,7 +34,12 @@ interface DayOrdersModalProps {
   onSelectOrder?: (order: Order) => void;
   onOpenLinkModal?: () => void;
   onOpenNewSchedule?: (targetDate: string) => void;
-  initialOrderType?: string;
+  externalFilterUnit?: string;
+  externalFilterOrderType?: string;
+  externalStageFilter?: StageDateFilter;
+  externalFilterUnits?: string[];
+  externalFilterOrderTypes?: string[];
+  externalStageFilters?: string[];
   onOpenScheduleOrders?: (schedule: Schedule, filter?: 'ALL' | 'NO_PRAZO' | 'FORA_DO_PRAZO') => void;
 }
 
@@ -56,14 +52,17 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
   onSelectOrder,
   onOpenLinkModal,
   onOpenNewSchedule,
-  initialOrderType = 'ALL',
+  externalFilterUnit = 'ALL',
+  externalFilterOrderType = 'ALL',
+  externalStageFilter = 'TODOS',
+  externalFilterUnits,
+  externalFilterOrderTypes,
+  externalStageFilters,
   onOpenScheduleOrders,
 }) => {
   const { 
     orders, 
     schedules, 
-    units, 
-    orderTypes, 
     settings, 
     currentUser, 
     updateOrder, 
@@ -72,11 +71,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
     unlinkOrder
   } = useStore();
 
-  const [activeTab, setActiveTab] = useState<'TODOS' | 'ENTREGA' | 'SEPARACAO' | 'EXPEDICAO' | 'APROVACAO' | 'SOLICITACAO' | 'MARCOS'>('TODOS');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterUnit, setFilterUnit] = useState<string>('ALL');
-  const [filterOrderType, setFilterOrderType] = useState<string>(initialOrderType || 'ALL');
-  const [filterSLA, setFilterSLA] = useState<'ALL' | 'NO_PRAZO' | 'FORA_DO_PRAZO' | 'ATENCAO'>('ALL');
   const [editingDateOrderId, setEditingDateOrderId] = useState<string | null>(null);
   const [tempDateValue, setTempDateValue] = useState<string>('');
   const [isUnlinkConfirmOpen, setIsUnlinkConfirmOpen] = useState(false);
@@ -87,18 +81,30 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
     clearStageDates: true,
   });
 
-  useEffect(() => {
-    if (initialOrderType) {
-      setFilterOrderType(initialOrderType);
-    }
-  }, [initialOrderType]);
-
   const monthStr = monthNumber === 9 ? '09' : '10';
   const monthName = monthNumber === 9 ? 'Setembro' : 'Outubro';
   const totalDaysInMonth = monthNumber === 9 ? 30 : 31;
   const isToday = monthNumber === 9 && dayNumber === 24;
-
   const targetDateStr = `2026-${monthStr}-${String(dayNumber).padStart(2, '0')}`;
+
+  // Multi-filtro externo normalizado
+  const effectiveUnits = useMemo(() => {
+    if (externalFilterUnits && externalFilterUnits.length > 0) return externalFilterUnits;
+    if (externalFilterUnit && externalFilterUnit !== 'ALL') return [externalFilterUnit];
+    return [];
+  }, [externalFilterUnits, externalFilterUnit]);
+
+  const effectiveOrderTypes = useMemo(() => {
+    if (externalFilterOrderTypes && externalFilterOrderTypes.length > 0) return externalFilterOrderTypes;
+    if (externalFilterOrderType && externalFilterOrderType !== 'ALL') return [externalFilterOrderType];
+    return [];
+  }, [externalFilterOrderTypes, externalFilterOrderType]);
+
+  const effectiveStages = useMemo(() => {
+    if (externalStageFilters && externalStageFilters.length > 0) return externalStageFilters;
+    if (externalStageFilter && externalStageFilter !== 'TODOS') return [externalStageFilter];
+    return [];
+  }, [externalStageFilters, externalStageFilter]);
 
   // Schedules map for SLA calculation and linked date fallback
   const schedulesMap = useMemo(() => {
@@ -124,7 +130,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       const parts = clean.split(' ')[0].split('/');
       if (parts.length >= 3) {
         if (parts[2].length === 4) {
-          return parseInt(parts[1], 10) === monthNumber && parseInt(parts[0], 10) === dayNumber;
+          return parseInt(parts[1], 10) === monthNumber && parseInt(parts[2], 10) === dayNumber;
         } else {
           return parseInt(parts[1], 10) === monthNumber && parseInt(parts[2], 10) === dayNumber;
         }
@@ -133,7 +139,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
     return false;
   };
 
-  // Group orders for this day, taking into account explicit order dates AND schedule-linked dates
+  // Group active orders for this day, strictly filtering out unlinked items and respecting external filters
   const dayCategorized = useMemo(() => {
     const entregas: Order[] = [];
     const separacoes: Order[] = [];
@@ -142,76 +148,91 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
     const solicitacoes: Order[] = [];
 
     orders.forEach(o => {
-      const sch = o.cronograma_id ? schedulesMap.get(o.cronograma_id) : null;
-      let matchedAny = false;
+      // Pedidos desvinculados sem cronograma não pertencem ao dia
+      if (o.cronograma_vinculo === 'NENHUM' || !o.cronograma_id) {
+        return;
+      }
+
+      // Aplica multi-filtros externos
+      if (effectiveUnits.length > 0 && !effectiveUnits.includes(o.unidade)) {
+        return;
+      }
+      if (effectiveOrderTypes.length > 0 && !effectiveOrderTypes.includes(o.tipo)) {
+        return;
+      }
+
+      const sch = schedulesMap.get(o.cronograma_id);
 
       // 1. Entrega: explicit delivery or schedule delivery
       const dEntrega = o.data_prevista_entrega || sch?.data_entrega;
       if (matchesDay(dEntrega)) {
         entregas.push(o);
-        matchedAny = true;
       }
 
       // 2. Separação: explicit separation or schedule separation
       const dSep = o.data_inicio_separacao || sch?.data_separacao;
       if (matchesDay(dSep)) {
         separacoes.push(o);
-        matchedAny = true;
       }
 
       // 3. Expedição: explicit expedition or schedule expedition
       const dExp = o.data_expedicao || sch?.data_expedicao;
       if (matchesDay(dExp)) {
         expedicoes.push(o);
-        matchedAny = true;
       }
 
-      // 4. Aprovação: explicit approval or schedule approval limit
-      const dAprov = o.data_aprovacao || sch?.data_limite_aprovacao;
-      if (matchesDay(dAprov)) {
-        aprovacoes.push(o);
-        matchedAny = true;
+      // 4. Aprovação: se vinculado ou com data de aprovação
+      if (o.cronograma_id || o.data_aprovacao) {
+        const dAprov = o.data_aprovacao || sch?.data_limite_aprovacao;
+        if (matchesDay(dAprov)) {
+          aprovacoes.push(o);
+        }
       }
 
-      // 5. Solicitação: explicit solicitation or schedule solicitation limit
-      const dSol = o.data_solicitacao || sch?.data_limite_solicitacao;
-      if (matchesDay(dSol)) {
-        solicitacoes.push(o);
-        matchedAny = true;
+      // 5. Solicitação: apenas se vinculado a cronograma ativo
+      if (o.cronograma_id && sch?.data_limite_solicitacao) {
+        if (matchesDay(sch.data_limite_solicitacao)) {
+          solicitacoes.push(o);
+        }
       }
     });
 
-    // Unified set of all unique orders involved in this day
+    // Conjunto unificado de todos os pedidos ativos do dia
     const allUniqueMap = new Map<string, Order>();
     [...entregas, ...separacoes, ...expedicoes, ...aprovacoes, ...solicitacoes].forEach(o => {
       allUniqueMap.set(o.id, o);
     });
 
-    // Official milestones on this day
+    // Marcos oficiais de cronograma neste dia
     const marcos: { sch: Schedule; stage: string; color: string }[] = [];
     schedules.forEach(sch => {
-      if (filterUnit !== 'ALL') {
-        const q = filterUnit.toUpperCase().trim();
-        const matchesUnit = 
-          (sch.unidade && sch.unidade.toUpperCase().trim() === q) ||
-          (sch.unidades && sch.unidades.some(u => u.toUpperCase().trim() === q)) ||
-          (sch.unidade && sch.unidade.split(',').map(x => x.trim().toUpperCase()).includes(q));
-        if (!matchesUnit) return;
+      if (effectiveUnits.length > 0) {
+        const schUnits = sch.unidades && sch.unidades.length > 0
+          ? sch.unidades
+          : sch.unidade.includes(',')
+          ? sch.unidade.split(',').map(s => s.trim())
+          : [sch.unidade];
+        const matchesAny = schUnits.some(u => effectiveUnits.includes(u));
+        if (!matchesAny) return;
       }
+      if (effectiveOrderTypes.length > 0 && !effectiveOrderTypes.includes(sch.tipo_pedido)) {
+        return;
+      }
+
       if (matchesDay(sch.data_limite_solicitacao)) {
-        marcos.push({ sch, stage: 'Limite para Envio de Solicitações', color: 'bg-blue-100 text-blue-800' });
+        marcos.push({ sch, stage: 'Limite para Envio de Solicitações', color: 'bg-blue-100 text-blue-900 border border-blue-300' });
       }
       if (matchesDay(sch.data_limite_aprovacao)) {
-        marcos.push({ sch, stage: 'Limite para Validação SESAU', color: 'bg-amber-100 text-amber-800' });
+        marcos.push({ sch, stage: 'Limite para Validação SESAU', color: 'bg-amber-100 text-amber-900 border border-amber-300' });
       }
       if (matchesDay(sch.data_separacao)) {
-        marcos.push({ sch, stage: 'Data Prevista de Separação em Almoxarifado', color: 'bg-purple-100 text-purple-800' });
+        marcos.push({ sch, stage: 'Data Prevista de Separação em Almoxarifado', color: 'bg-purple-100 text-purple-900 border border-purple-300' });
       }
       if (matchesDay(sch.data_expedicao)) {
-        marcos.push({ sch, stage: 'Data Prevista de Expedição & Carga', color: 'bg-cyan-100 text-cyan-800' });
+        marcos.push({ sch, stage: 'Data Prevista de Expedição & Carga', color: 'bg-cyan-100 text-cyan-900 border border-cyan-300' });
       }
       if (matchesDay(sch.data_entrega)) {
-        marcos.push({ sch, stage: 'Previsão de Entrega no Hospital', color: 'bg-emerald-100 text-emerald-800' });
+        marcos.push({ sch, stage: 'Previsão de Entrega no Hospital', color: 'bg-emerald-100 text-emerald-900 border border-emerald-300' });
       }
     });
 
@@ -224,186 +245,129 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       solicitacoes,
       marcos,
     };
-  }, [orders, schedules, dayNumber, monthStr, filterUnit, schedulesMap]);
+  }, [orders, schedules, dayNumber, monthStr, effectiveUnits, effectiveOrderTypes, schedulesMap]);
 
-  // Order types breakdown for this specific day
-  const dayTypesCountMap = useMemo(() => {
-    const map = new Map<string, number>();
-    dayCategorized.todos.forEach(o => {
-      const t = o.tipo || 'Mensal';
-      map.set(t, (map.get(t) || 0) + 1);
-    });
-    return map;
-  }, [dayCategorized.todos]);
+  // Lista de pedidos que segue estritamente o filtro de etapa externo (suporta multi-seleção de etapas)
+  const displayedOrders = useMemo(() => {
+    if (effectiveStages.length === 0 || effectiveStages.includes('TODOS')) {
+      return dayCategorized.todos;
+    }
+    const orderSet = new Set<string>();
+    const list: Order[] = [];
 
-  // Active list based on selected tab and filtered by order type
-  const tabOrders = useMemo(() => {
-    let list: Order[];
-    switch (activeTab) {
-      case 'ENTREGA': list = dayCategorized.entregas; break;
-      case 'SEPARACAO': list = dayCategorized.separacoes; break;
-      case 'EXPEDICAO': list = dayCategorized.expedicoes; break;
-      case 'APROVACAO': list = dayCategorized.aprovacoes; break;
-      case 'SOLICITACAO': list = dayCategorized.solicitacoes; break;
-      case 'MARCOS': list = []; break;
-      default: list = dayCategorized.todos; break;
+    if (effectiveStages.includes('ENTREGA')) {
+      dayCategorized.entregas.forEach(o => {
+        if (!orderSet.has(o.id)) { orderSet.add(o.id); list.push(o); }
+      });
+    }
+    if (effectiveStages.includes('SEPARACAO')) {
+      dayCategorized.separacoes.forEach(o => {
+        if (!orderSet.has(o.id)) { orderSet.add(o.id); list.push(o); }
+      });
+    }
+    if (effectiveStages.includes('EXPEDICAO')) {
+      dayCategorized.expedicoes.forEach(o => {
+        if (!orderSet.has(o.id)) { orderSet.add(o.id); list.push(o); }
+      });
+    }
+    if (effectiveStages.includes('APROVACAO')) {
+      dayCategorized.aprovacoes.forEach(o => {
+        if (!orderSet.has(o.id)) { orderSet.add(o.id); list.push(o); }
+      });
+    }
+    if (effectiveStages.includes('SOLICITACAO')) {
+      dayCategorized.solicitacoes.forEach(o => {
+        if (!orderSet.has(o.id)) { orderSet.add(o.id); list.push(o); }
+      });
     }
 
-    if (filterOrderType !== 'ALL') {
-      return list.filter(o => o.tipo === filterOrderType);
+    if (effectiveStages.length === 1 && effectiveStages[0] === 'MARCOS') {
+      return [];
     }
+
     return list;
-  }, [activeTab, dayCategorized, filterOrderType]);
+  }, [effectiveStages, dayCategorized]);
 
-  // Filtered by Search & Unit & Order Type & SLA
-  const filteredOrders = useMemo(() => {
-    return tabOrders.filter(o => {
-      if (filterUnit !== 'ALL' && o.unidade !== filterUnit) return false;
-      if (filterSLA !== 'ALL') {
-        const sch = o.cronograma_id ? schedulesMap.get(o.cronograma_id) : null;
-        const { situation } = calculateDeadlineSituation(o, sch, settings?.horas_alerta_atencao || 48);
-        if (filterSLA === 'NO_PRAZO' && situation !== 'Dentro do prazo' && situation !== 'Concluído no prazo') return false;
-        if (filterSLA === 'ATENCAO' && situation !== 'Atenção') return false;
-        if (filterSLA === 'FORA_DO_PRAZO' && situation !== 'Atrasado' && situation !== 'Concluído com atraso') return false;
-      }
-      if (searchTerm) {
-        const q = searchTerm.toLowerCase().trim();
-        const matchesCode = o.codigo.toLowerCase().includes(q);
-        const matchesUnit = o.unidade.toLowerCase().includes(q);
-        const matchesRequester = o.solicitante.toLowerCase().includes(q);
-        const matchesProgram = o.programa.toLowerCase().includes(q);
-        const matchesType = o.tipo.toLowerCase().includes(q);
-        if (!matchesCode && !matchesUnit && !matchesRequester && !matchesProgram && !matchesType) return false;
-      }
-      return true;
-    });
-  }, [tabOrders, filterUnit, filterSLA, searchTerm, schedulesMap, settings]);
+  // Indicador legível das etapas externas
+  const stageFilterLabel = useMemo(() => {
+    if (effectiveStages.length === 0 || effectiveStages.includes('TODOS')) {
+      return 'Todas as Etapas';
+    }
+    const mapLabels: Record<string, string> = {
+      ENTREGA: 'Entregas',
+      SEPARACAO: 'Separações',
+      EXPEDICAO: 'Expedições',
+      APROVACAO: 'Aprovações',
+      SOLICITACAO: 'Solicitações',
+      MARCOS: 'Marcos de Cronograma',
+    };
+    return effectiveStages.map(s => mapLabels[s] || s).join(', ');
+  }, [effectiveStages]);
 
-  // Aggregated KPIs for the day (adjusted dynamically by order type filter)
+  // KPIs agregados
   const kpis = useMemo(() => {
-    const baseList = filterOrderType === 'ALL'
-      ? dayCategorized.todos
-      : dayCategorized.todos.filter(o => o.tipo === filterOrderType);
-
-    const totalOrders = baseList.length;
+    const totalOrders = dayCategorized.todos.length;
     let totalItems = 0;
     let urgentes = 0;
     let entregues = 0;
-    let noPrazo = 0;
-    let atencao = 0;
-    let foraDoPrazo = 0;
-    let uninitializedCount = 0;
 
-    baseList.forEach(o => {
+    dayCategorized.todos.forEach(o => {
       totalItems += o.quantidade_itens || 0;
       if (o.tipo === 'Emergencial' || o.tipo === 'Falta') urgentes++;
       if (o.status_operacional === 'Entregue' || o.status_operacional === 'Entregue Parcialmente') entregues++;
-
-      const sch = o.cronograma_id ? schedulesMap.get(o.cronograma_id) : null;
-      const { situation } = calculateDeadlineSituation(o, sch, settings?.horas_alerta_atencao || 48);
-      if (situation === 'Dentro do prazo' || situation === 'Concluído no prazo') {
-        noPrazo++;
-      } else if (situation === 'Atenção') {
-        atencao++;
-      } else if (situation === 'Atrasado' || situation === 'Concluído com atraso') {
-        foraDoPrazo++;
-      }
-
-      if (!o.data_inicio) {
-        uninitializedCount++;
-      }
     });
-
-    const entregasCount = filterOrderType === 'ALL'
-      ? dayCategorized.entregas.length
-      : dayCategorized.entregas.filter(o => o.tipo === filterOrderType).length;
-
-    const separacoesCount = filterOrderType === 'ALL'
-      ? dayCategorized.separacoes.length
-      : dayCategorized.separacoes.filter(o => o.tipo === filterOrderType).length;
-
-    const expedicoesCount = filterOrderType === 'ALL'
-      ? dayCategorized.expedicoes.length
-      : dayCategorized.expedicoes.filter(o => o.tipo === filterOrderType).length;
-
-    const marcosCount = filterOrderType === 'ALL'
-      ? dayCategorized.marcos.length
-      : dayCategorized.marcos.filter(m => m.sch.tipo_pedido === filterOrderType).length;
 
     return {
       totalOrders,
       totalItems,
       urgentes,
       entregues,
-      entregasCount,
-      separacoesCount,
-      expedicoesCount,
-      marcosCount,
-      noPrazo,
-      atencao,
-      foraDoPrazo,
-      uninitializedCount,
-      taxaNoPrazo: totalOrders > 0 ? Math.round((noPrazo / totalOrders) * 100) : 100,
+      entregasCount: dayCategorized.entregas.length,
+      separacoesCount: dayCategorized.separacoes.length,
+      expedicoesCount: dayCategorized.expedicoes.length,
+      marcosCount: dayCategorized.marcos.length,
     };
-  }, [dayCategorized, filterOrderType, schedulesMap, settings]);
+  }, [dayCategorized]);
 
-  // Day of week calculation
   const dayOfWeek = useMemo(() => {
-    try {
-      const d = new Date(2026, monthNumber - 1, dayNumber);
-      const days = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
-      return days[d.getDay()];
-    } catch {
-      return '';
-    }
-  }, [dayNumber, monthNumber]);
+    const d = new Date(2026, monthNumber - 1, dayNumber);
+    return d.toLocaleDateString('pt-BR', { weekday: 'long' });
+  }, [monthNumber, dayNumber]);
 
   if (!isOpen) return null;
 
-  const handleShiftOrderDate = (order: Order, deltaDays: number) => {
-    const targetDay = Math.min(totalDaysInMonth, Math.max(1, dayNumber + deltaDays));
-    const newTargetDate = `2026-${monthStr}-${String(targetDay).padStart(2, '0')}`;
-    updateOrder(order.id, { data_prevista_entrega: newTargetDate }, currentUser, `Reagendado do dia ${dayNumber} para ${targetDay}`);
-    showToast('success', `${order.codigo} reagendado`, `Nova data prevista: ${targetDay}/${monthStr}/2026`);
+  const handleExportDay = () => {
+    const listToExport = displayedOrders.length > 0 ? displayedOrders : dayCategorized.todos;
+    if (listToExport.length === 0) {
+      showToast('info', 'Sem pedidos', 'Não há pedidos para exportar neste dia.');
+      return;
+    }
+    exportOrdersToSpreadsheet(listToExport, 'xlsx', `pedidos_dia_${String(dayNumber).padStart(2, '0')}_${monthStr}_2026`);
+    showToast('success', 'Planilha exportada', `${listToExport.length} pedidos do dia foram exportados com sucesso.`);
   };
 
-  const handleQuickSetInitialDate = (order: Order, dateStr: string) => {
-    if (!dateStr) return;
+  const handleSaveInitialDate = (order: Order) => {
+    if (!tempDateValue) {
+      setEditingDateOrderId(null);
+      return;
+    }
     updateOrder(order.id, { 
-      data_inicio: dateStr,
-      data_solicitacao: order.data_solicitacao || dateStr,
-    }, currentUser, 'Data de inicialização definida no modal do dia');
-    showToast('success', `${order.codigo} atualizado`, `Data de inicialização: ${formatShortDate(dateStr)}`);
+      data_inicio: tempDateValue,
+      data_solicitacao: order.data_solicitacao || tempDateValue,
+    }, currentUser, `Data de inicialização definida para ${formatShortDate(tempDateValue)}`);
+    showToast('success', `${order.codigo} atualizado`, `Data de inicialização: ${formatShortDate(tempDateValue)}`);
     setEditingDateOrderId(null);
   };
 
-  const handleBatchSetInitialDates = () => {
-    const uninitialized = filteredOrders.filter(o => !o.data_inicio);
-    if (uninitialized.length === 0) {
-      showToast('info', 'Todos já inicializados', 'Todos os pedidos exibidos já possuem data de inicialização definida.');
-      return;
-    }
-
-    uninitialized.forEach(o => {
-      updateOrder(o.id, { 
-        data_inicio: targetDateStr,
-        data_solicitacao: o.data_solicitacao || targetDateStr,
-      }, currentUser, 'Inicialização em lote no dia');
-    });
-
-    showToast('success', 'Inicialização em Lote', `${uninitialized.length} pedidos inicializados com a data ${formatShortDate(targetDateStr)}.`);
+  const handleShiftDate = (order: Order, deltaDays: number) => {
+    const curDay = dayNumber;
+    const targetDay = Math.min(totalDaysInMonth, Math.max(1, curDay + deltaDays));
+    const newTargetDate = `2026-${monthStr}-${String(targetDay).padStart(2, '0')}`;
+    updateOrder(order.id, { data_prevista_entrega: newTargetDate }, currentUser, `Reagendado para dia ${targetDay}`);
+    showToast('success', `${order.codigo} reagendado`, `Nova data prevista: ${targetDay}/${monthStr}/2026`);
   };
 
-  const handleExportDay = () => {
-    exportOrdersToSpreadsheet(
-      filteredOrders.length > 0 ? filteredOrders : dayCategorized.todos,
-      'xlsx',
-      `romaneio_pedidos_${dayNumber}_${monthStr}_2026`
-    );
-    showToast('success', 'Planilha gerada com sucesso!', `Exportados os pedidos do dia ${dayNumber}/${monthStr}/2026.`);
-  };
-
-  const handleUnlinkAllOrders = async () => {
+  const handleConfirmBatchUnlink = async () => {
     try {
       setIsUnlinking(true);
       const result = await unlinkOrdersOfDay(dayNumber, monthNumber, {
@@ -424,7 +388,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
         showToast(
           'info',
           'Nenhum pedido vinculado',
-          `Não há pedidos com vínculos ativos para serem desvinculados neste dia.`
+          'Não há pedidos com vínculos ativos para serem desvinculados neste dia.'
         );
       }
       setIsUnlinkConfirmOpen(false);
@@ -437,60 +401,60 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div 
-        className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        className="bg-white rounded-3xl shadow-2xl border border-slate-300 w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Top Header with Date Switcher - Rounded Top */}
-        <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {/* Top Header with Date Switcher */}
+        <div className="p-4 sm:p-5 border-b border-slate-300 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
               <CalendarCheck className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-slate-900 tracking-tight">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-bold text-slate-950 tracking-tight">
                   Visualização Completa do Dia {dayNumber} de {monthName} de 2026
                 </h3>
                 {isToday && (
-                  <span className="text-[10px] font-bold text-blue-700 bg-blue-100/90 px-2.5 py-0.5 rounded-full border border-blue-200">
+                  <span className="text-[10px] font-bold text-blue-800 bg-blue-100 px-2.5 py-0.5 rounded-full border border-blue-300">
                     Hoje
                   </span>
                 )}
-                <span className="text-xs font-mono text-slate-500 font-semibold hidden md:inline">
+                <span className="text-xs font-mono text-slate-600 font-semibold capitalize hidden md:inline">
                   ({dayOfWeek})
                 </span>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Controle detalhado de todas as solicitações, entregas, expedições e separações agendadas
+              <p className="text-xs text-slate-600 mt-0.5">
+                Controle detalhado de solicitações, entregas, expedições e separações agendadas
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             {/* Day Navigators */}
-            <div className="flex items-center p-1 bg-white rounded-full border border-slate-200 shadow-2xs">
+            <div className="flex items-center p-1 bg-white rounded-xl border border-slate-300 shadow-2xs">
               <button
                 onClick={() => onNavigateDay(Math.max(1, dayNumber - 1))}
                 disabled={dayNumber <= 1}
-                className="flex items-center gap-1 px-3 py-1 text-xs font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-30 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-3 py-1 text-xs font-semibold text-slate-700 hover:text-slate-950 disabled:opacity-30 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
                 title="Dia Anterior"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Anterior</span>
               </button>
 
-              <span className="text-xs font-mono font-bold text-blue-700 px-3 py-0.5 bg-blue-50 rounded-full border border-blue-200/80">
+              <span className="text-xs font-mono font-bold text-blue-900 px-3 py-0.5 bg-blue-50 rounded-lg border border-blue-200">
                 {String(dayNumber).padStart(2, '0')}/{monthStr}/26
               </span>
 
               <button
                 onClick={() => onNavigateDay(Math.min(totalDaysInMonth, dayNumber + 1))}
                 disabled={dayNumber >= totalDaysInMonth}
-                className="flex items-center gap-1 px-3 py-1 text-xs font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-30 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-3 py-1 text-xs font-semibold text-slate-700 hover:text-slate-950 disabled:opacity-30 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
                 title="Próximo Dia"
               >
                 <span className="hidden sm:inline">Próximo</span>
@@ -500,376 +464,160 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
 
             <button
               onClick={onClose}
-              className="w-9 h-9 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-600 flex items-center justify-center transition-colors cursor-pointer"
+              className="w-9 h-9 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 hover:text-slate-950 flex items-center justify-center transition-colors cursor-pointer"
+              title="Fechar"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Day Metric Highlights Bar (KPIs) */}
-        <div className="p-4 bg-slate-50/50 border-b border-slate-200/80 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
-          <div className="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-2xs">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+        {/* Day Metric Highlights Bar (KPIs) - Crisp high contrast */}
+        <div className="p-4 bg-slate-100/60 border-b border-slate-300 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+          <div className="bg-white p-3 rounded-2xl border border-slate-300 shadow-2xs">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
               Total no Dia
             </span>
-            <div className="text-lg font-bold font-mono text-slate-900 mt-0.5">
-              {kpis.totalOrders} <span className="text-xs font-normal text-slate-400">pedidos</span>
+            <div className="text-lg font-bold font-mono text-slate-950 mt-0.5">
+              {kpis.totalOrders} <span className="text-xs font-normal text-slate-500">pedidos</span>
             </div>
-            <span className="text-[10px] text-slate-500 font-mono">
+            <span className="text-[10px] text-slate-600 font-mono font-medium">
               {kpis.totalItems} itens totais
             </span>
           </div>
 
-          <div className="bg-emerald-50/60 p-3 rounded-2xl border border-emerald-200/80 shadow-2xs">
-            <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-300 shadow-2xs">
+            <span className="text-[10px] font-bold text-emerald-900 uppercase tracking-wider block flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
               <span>Entregas</span>
             </span>
-            <div className="text-lg font-bold font-mono text-emerald-900 mt-0.5">
+            <div className="text-lg font-bold font-mono text-emerald-950 mt-0.5">
               {kpis.entregasCount}
             </div>
-            <span className="text-[10px] text-emerald-700 font-medium">
+            <span className="text-[10px] text-emerald-800 font-medium">
               Agendadas p/ hospital
             </span>
           </div>
 
-          <div className="bg-purple-50/60 p-3 rounded-2xl border border-purple-200/80 shadow-2xs">
-            <span className="text-[10px] font-bold text-purple-800 uppercase tracking-wider block flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+          <div className="bg-purple-50 p-3 rounded-2xl border border-purple-300 shadow-2xs">
+            <span className="text-[10px] font-bold text-purple-900 uppercase tracking-wider block flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
               <span>Separações</span>
             </span>
-            <div className="text-lg font-bold font-mono text-purple-900 mt-0.5">
+            <div className="text-lg font-bold font-mono text-purple-950 mt-0.5">
               {kpis.separacoesCount}
             </div>
-            <span className="text-[10px] text-purple-700 font-medium">
+            <span className="text-[10px] text-purple-800 font-medium">
               Em picking / packing
             </span>
           </div>
 
-          <div className="bg-cyan-50/60 p-3 rounded-2xl border border-cyan-200/80 shadow-2xs">
-            <span className="text-[10px] font-bold text-cyan-800 uppercase tracking-wider block flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+          <div className="bg-cyan-50 p-3 rounded-2xl border border-cyan-300 shadow-2xs">
+            <span className="text-[10px] font-bold text-cyan-900 uppercase tracking-wider block flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-600" />
               <span>Expedições</span>
             </span>
-            <div className="text-lg font-bold font-mono text-cyan-900 mt-0.5">
+            <div className="text-lg font-bold font-mono text-cyan-950 mt-0.5">
               {kpis.expedicoesCount}
             </div>
-            <span className="text-[10px] text-cyan-700 font-medium">
+            <span className="text-[10px] text-cyan-800 font-medium">
               Carga / transporte
             </span>
           </div>
 
-          <div className="bg-rose-50/60 p-3 rounded-2xl border border-rose-200/80 shadow-2xs">
-            <span className="text-[10px] font-bold text-rose-800 uppercase tracking-wider block flex items-center gap-1">
+          <div className="bg-rose-50 p-3 rounded-2xl border border-rose-300 shadow-2xs">
+            <span className="text-[10px] font-bold text-rose-900 uppercase tracking-wider block flex items-center gap-1">
               <AlertCircle className="w-3 h-3 text-rose-600" />
               <span>Urgências</span>
             </span>
-            <div className="text-lg font-bold font-mono text-rose-900 mt-0.5">
+            <div className="text-lg font-bold font-mono text-rose-950 mt-0.5">
               {kpis.urgentes}
             </div>
-            <span className="text-[10px] text-rose-700 font-medium">
+            <span className="text-[10px] text-rose-800 font-medium">
               Emergencial / Falta
             </span>
           </div>
 
-          <div className="bg-slate-100/70 p-3 rounded-2xl border border-slate-200/80 shadow-2xs">
-            <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">
+          <div className="bg-slate-50 p-3 rounded-2xl border border-slate-300 shadow-2xs">
+            <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block">
               Marcos Oficiais
             </span>
-            <div className="text-lg font-bold font-mono text-slate-800 mt-0.5">
+            <div className="text-lg font-bold font-mono text-slate-900 mt-0.5">
               {kpis.marcosCount}
             </div>
-            <span className="text-[10px] text-slate-500 font-medium">
+            <span className="text-[10px] text-slate-600 font-medium">
               Limites do ciclo
             </span>
           </div>
         </div>
 
-        {/* Stage Filter Tabs Bar & Search - Rounded Full Controls */}
-        <div className="p-3 sm:p-4 bg-white border-b border-slate-200 flex flex-col md:flex-row items-center justify-between gap-3">
-          {/* Stage Tabs */}
-          <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto p-1 bg-slate-100/80 rounded-full border border-slate-200/60 text-xs">
-            {[
-              { id: 'TODOS', label: 'Todos os Pedidos', count: kpis.totalOrders },
-              { id: 'ENTREGA', label: '🟢 Entregas', count: kpis.entregasCount },
-              { id: 'SEPARACAO', label: '🟣 Separações', count: kpis.separacoesCount },
-              { id: 'EXPEDICAO', label: '🟠 Expedições', count: kpis.expedicoesCount },
-              { id: 'APROVACAO', label: '🟡 Aprovações', count: filterOrderType === 'ALL' ? dayCategorized.aprovacoes.length : dayCategorized.aprovacoes.filter(o => o.tipo === filterOrderType).length },
-              { id: 'SOLICITACAO', label: '🔵 Solicitações', count: filterOrderType === 'ALL' ? dayCategorized.solicitacoes.length : dayCategorized.solicitacoes.filter(o => o.tipo === filterOrderType).length },
-              { id: 'MARCOS', label: '🏁 Marcos Oficiais', count: kpis.marcosCount },
-            ].map(tab => {
-              const isSelected = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all cursor-pointer whitespace-nowrap font-medium ${
-                    isSelected
-                      ? 'bg-white text-slate-900 shadow-xs font-bold scale-[1.02]'
-                      : 'text-slate-500 hover:text-slate-900 hover:bg-white/50'
-                  }`}
-                >
-                  <span>{tab.label}</span>
-                  <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                    isSelected ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
-                  }`}>
-                    {tab.count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Search, Type & Unit Filters */}
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto shrink-0">
-            <div className="relative flex-1 md:w-48">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar pedido..."
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 hover:bg-slate-100/70 border border-slate-200/90 rounded-full focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
-              />
-            </div>
-
-            {/* Filter by Type */}
-            <select
-              value={filterOrderType}
-              onChange={(e) => setFilterOrderType(e.target.value)}
-              className="text-xs bg-slate-50 hover:bg-slate-100/70 border border-slate-200/90 rounded-full px-3 py-1.5 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all cursor-pointer"
-            >
-              <option value="ALL">Todos os Tipos ({dayCategorized.todos.length})</option>
-              {orderTypes.map(t => (
-                <option key={t.id} value={t.nome}>
-                  {t.nome} ({dayTypesCountMap.get(t.nome) || 0})
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={filterUnit}
-              onChange={(e) => setFilterUnit(e.target.value)}
-              className="text-xs bg-slate-50 hover:bg-slate-100/70 border border-slate-200/90 rounded-full px-3 py-1.5 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all cursor-pointer"
-            >
-              <option value="ALL">Todas as Unidades</option>
-              {units.map(u => (
-                <option key={u.id} value={u.sigla}>{u.sigla}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Quick Order Types Pills Filter Bar */}
-        <div className="px-4 py-2 bg-slate-50/70 border-b border-slate-200/60 flex items-center justify-between flex-wrap gap-2 text-xs">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
-              Tipo de Pedido:
+        {/* Inherited External Filters Banner - ZERO internal filter controls */}
+        <div className="px-4 py-3 bg-white border-b border-slate-300 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">
+              Filtros Ativos do Calendário:
             </span>
-            <button
-              onClick={() => setFilterOrderType('ALL')}
-              className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                filterOrderType === 'ALL'
-                  ? 'bg-slate-900 text-white shadow-xs font-bold'
-                  : 'bg-white text-slate-600 hover:bg-slate-200/70 border border-slate-200'
-              }`}
-            >
-              <span>Todos</span>
-              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                filterOrderType === 'ALL' ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600'
-              }`}>
-                {dayCategorized.todos.length}
-              </span>
-            </button>
-
-            {orderTypes.map(typeConfig => {
-              const count = dayTypesCountMap.get(typeConfig.nome) || 0;
-              const isSelected = filterOrderType === typeConfig.nome;
-              return (
-                <button
-                  key={typeConfig.id}
-                  onClick={() => setFilterOrderType(isSelected ? 'ALL' : typeConfig.nome)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    isSelected
-                      ? 'bg-blue-600 text-white shadow-xs font-bold'
-                      : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
-                  }`}
-                  title={`Filtrar apenas pedidos do tipo ${typeConfig.nome}`}
-                >
-                  <span 
-                    className="w-2 h-2 rounded-full" 
-                    style={{ backgroundColor: typeConfig.cor }} 
-                  />
-                  <span>{typeConfig.nome}</span>
-                  <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                    isSelected ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-600'
-                  }`}>
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {filterOrderType !== 'ALL' && (
-            <div className="flex items-center gap-1.5 bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-0.5 rounded-full text-[11px] font-medium">
-              <span>Filtrado por: <strong>{filterOrderType}</strong></span>
-              <button
-                onClick={() => setFilterOrderType('ALL')}
-                className="text-blue-700 hover:text-blue-950 font-bold ml-1 cursor-pointer"
-                title="Remover filtro de tipo de pedido"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Quick SLA Pills & Batch Initialization Bar */}
-        <div className="px-4 py-2 bg-white border-b border-slate-200/60 flex items-center justify-between flex-wrap gap-2 text-xs">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">
-              Auditoria de Prazos (SLA):
+            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-xl bg-slate-100 border border-slate-300 text-slate-900 font-bold shadow-2xs">
+              <span className="text-slate-500 font-normal">Etapas:</span>
+              <span>{stageFilterLabel}</span>
             </span>
-            <button
-              onClick={() => setFilterSLA('ALL')}
-              className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                filterSLA === 'ALL'
-                  ? 'bg-slate-900 text-white shadow-xs font-bold'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200'
-              }`}
-            >
-              <span>Todos</span>
-              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                filterSLA === 'ALL' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-600'
-              }`}>
-                {kpis.totalOrders}
-              </span>
-            </button>
-
-            <button
-              onClick={() => setFilterSLA(filterSLA === 'NO_PRAZO' ? 'ALL' : 'NO_PRAZO')}
-              className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                filterSLA === 'NO_PRAZO'
-                  ? 'bg-emerald-600 text-white shadow-xs font-bold'
-                  : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
-              }`}
-              title="Filtrar pedidos que estão dentro do prazo previsto"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>No Prazo</span>
-              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                filterSLA === 'NO_PRAZO' ? 'bg-emerald-800 text-white' : 'bg-emerald-200/80 text-emerald-800'
-              }`}>
-                {kpis.noPrazo}
-              </span>
-            </button>
-
-            <button
-              onClick={() => setFilterSLA(filterSLA === 'FORA_DO_PRAZO' ? 'ALL' : 'FORA_DO_PRAZO')}
-              className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                filterSLA === 'FORA_DO_PRAZO'
-                  ? 'bg-rose-600 text-white shadow-xs font-bold'
-                  : kpis.foraDoPrazo > 0
-                  ? 'bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-300 font-bold'
-                  : 'bg-slate-50 text-slate-500 hover:bg-slate-100 border border-slate-200'
-              }`}
-              title="Filtrar pedidos fora do prazo / atrasados"
-            >
-              <AlertCircle className="w-3 h-3 text-rose-500" />
-              <span>Fora do Prazo</span>
-              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                filterSLA === 'FORA_DO_PRAZO' ? 'bg-rose-800 text-white' : 'bg-rose-200 text-rose-800'
-              }`}>
-                {kpis.foraDoPrazo}
-              </span>
-            </button>
-
-            {kpis.atencao > 0 && (
-              <button
-                onClick={() => setFilterSLA(filterSLA === 'ATENCAO' ? 'ALL' : 'ATENCAO')}
-                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                  filterSLA === 'ATENCAO'
-                    ? 'bg-amber-600 text-white shadow-xs font-bold'
-                    : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
-                }`}
-                title="Filtrar pedidos próximos do limite"
-              >
-                <span>Atenção</span>
-                <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                  filterSLA === 'ATENCAO' ? 'bg-amber-800 text-white' : 'bg-amber-200 text-amber-800'
-                }`}>
-                  {kpis.atencao}
-                </span>
-              </button>
-            )}
+            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-xl bg-slate-100 border border-slate-300 text-slate-900 font-bold shadow-2xs">
+              <span className="text-slate-500 font-normal">Unidades:</span>
+              <span>{effectiveUnits.length === 0 ? 'Todas as Unidades' : effectiveUnits.join(', ')}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-xl bg-slate-100 border border-slate-300 text-slate-900 font-bold shadow-2xs">
+              <span className="text-slate-500 font-normal">Tipos:</span>
+              <span>{effectiveOrderTypes.length === 0 ? 'Todos os Tipos' : effectiveOrderTypes.join(', ')}</span>
+            </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            {dayCategorized.todos.length > 0 && currentUser.role !== 'VIEWER' && (
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            <button
+              onClick={handleExportDay}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl transition-all cursor-pointer shadow-2xs"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Exportar Excel</span>
+            </button>
+
+            {onOpenNewSchedule && currentUser.role !== 'VIEWER' && (
               <button
-                type="button"
-                onClick={() => setIsUnlinkConfirmOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-all cursor-pointer shadow-2xs hover:shadow-xs"
-                title={`Desvincular todos os ${dayCategorized.todos.length} pedidos deste dia`}
+                onClick={() => {
+                  onClose();
+                  onOpenNewSchedule(targetDateStr);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-xl transition-all cursor-pointer shadow-2xs"
+                title="Registrar novo cronograma com múltiplas unidades para este dia"
               >
-                <Unlink className="w-3.5 h-3.5 text-rose-600" />
-                <span>Desvincular Pedidos do Dia ({dayCategorized.todos.length})</span>
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Criar Cronograma</span>
               </button>
             )}
 
-            {kpis.uninitializedCount > 0 && currentUser.role !== 'VIEWER' && (
+            {onOpenLinkModal && currentUser.role !== 'VIEWER' && (
               <button
-                type="button"
-                onClick={handleBatchSetInitialDates}
-                className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-all cursor-pointer shadow-2xs"
-                title={`Definir data de inicialização como ${dayNumber}/${monthStr}/2026 para todos os pedidos sem data`}
+                onClick={() => {
+                  onClose();
+                  onOpenLinkModal();
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition-all cursor-pointer"
               >
-                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                <span>Inicializar Pedidos ({kpis.uninitializedCount})</span>
-              </button>
-            )}
-
-            {filterSLA !== 'ALL' && (
-              <button
-                onClick={() => setFilterSLA('ALL')}
-                className="text-slate-400 hover:text-slate-700 text-xs underline cursor-pointer"
-              >
-                Limpar filtro SLA
+                <Link2 className="w-3.5 h-3.5" />
+                <span>+ Vincular Pedido</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Content Body: Table or Milestones List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* TAB 1: MARCOS OFICIAIS */}
-          {activeTab === 'MARCOS' ? (
+        {/* Modal Main Content */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+          {(effectiveStages.length === 1 && effectiveStages[0] === 'MARCOS') ? (
+            /* VIEW MARCOS */
             <div className="space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                    Marcos Oficiais do Cronograma para o Dia {dayNumber}/{monthStr}/2026
-                  </h4>
-                  <span className="text-[11px] font-mono text-slate-500">
-                    {dayCategorized.marcos.length} marco(s) regulatório(s)
-                  </span>
-                </div>
-
-                {onOpenNewSchedule && currentUser.role !== 'VIEWER' && (
-                  <button
-                    onClick={() => {
-                      onClose();
-                      onOpenNewSchedule(targetDateStr);
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-full shadow-xs hover:shadow-md transition-all cursor-pointer self-start sm:self-auto"
-                    title="Registrar novo cronograma com múltiplas unidades para este dia"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ Criar Cronograma neste Dia</span>
-                  </button>
-                )}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  Marcos Oficiais de Cronograma ({dayCategorized.marcos.length})
+                </span>
               </div>
 
               {dayCategorized.marcos.length > 0 ? (
@@ -884,31 +632,31 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                     return (
                       <div 
                         key={idx} 
-                        className="p-4 bg-slate-50 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2 hover:border-blue-300 transition-all"
+                        className="p-4 bg-white rounded-2xl border border-slate-300 shadow-xs space-y-2.5 hover:border-blue-400 transition-all"
                       >
                         <div className="flex items-center justify-between flex-wrap gap-1.5">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {unitsList.map(u => (
-                              <span key={u} className="text-xs font-bold text-blue-900 bg-blue-100/90 px-2 py-0.5 rounded-full border border-blue-200">
+                              <span key={u} className="text-xs font-bold text-blue-900 bg-blue-100 px-2 py-0.5 rounded-lg border border-blue-300">
                                 {u}
                               </span>
                             ))}
                             {unitsList.length > 1 && (
-                              <span className="text-[10px] text-slate-500 font-semibold">
+                              <span className="text-[10px] text-slate-600 font-semibold">
                                 ({unitsList.length} unidades vinculadas)
                               </span>
                             )}
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-bold">
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-lg bg-slate-100 text-slate-800 font-bold border border-slate-200">
                               {ev.sch.competencia}
                             </span>
                           </div>
-                          <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
+                          <span className="text-[11px] font-bold text-blue-800 bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200">
                             {ev.sch.programa}
                           </span>
                         </div>
 
                         <div className="pt-1">
-                          <span className="text-xs font-bold text-slate-800 block">
+                          <span className="text-xs font-bold text-slate-900 block">
                             {ev.stage}
                           </span>
                           <p className="text-[11px] text-slate-500 mt-0.5">
@@ -916,9 +664,9 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                           </p>
                         </div>
 
-                        <div className="pt-2 border-t border-slate-200/70 flex items-center justify-between text-[11px] text-slate-400 font-mono flex-wrap gap-1.5">
+                        <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-600 font-mono flex-wrap gap-1.5">
                           <span>Limite Sol.: {formatShortDate(ev.sch.data_limite_solicitacao)}</span>
-                          <span className="text-emerald-700 font-bold">Entrega: {formatShortDate(ev.sch.data_entrega)}</span>
+                          <span className="text-emerald-800 font-bold">Entrega: {formatShortDate(ev.sch.data_entrega)}</span>
                           {onOpenScheduleOrders && (
                             <button
                               type="button"
@@ -926,8 +674,8 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                                 onClose();
                                 onOpenScheduleOrders(ev.sch);
                               }}
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-full transition-colors cursor-pointer"
-                              title="Auditar progresso, verificar pedidos no prazo/fora do prazo e definir inicialização"
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-300 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                              title="Auditar progresso do cronograma"
                             >
                               <Sparkles className="w-3 h-3 text-blue-600" />
                               <span>Auditar Cronograma</span>
@@ -939,74 +687,37 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                   })}
                 </div>
               ) : (
-                <div className="p-12 text-center text-xs text-slate-400 italic bg-slate-50 rounded-2xl border border-slate-200/60">
+                <div className="p-12 text-center text-xs text-slate-500 italic bg-slate-50 rounded-2xl border border-slate-300">
                   Nenhum marco oficial de cronograma cadastrado especificamente para o dia {dayNumber}/{monthStr}/2026.
                 </div>
               )}
             </div>
           ) : (
-            /* TAB 2: PEDIDOS TABLE */
+            /* VIEW ORDERS TABLE */
             <div className="space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                    {activeTab === 'TODOS' ? 'Todos os Pedidos com Atividade Neste Dia' : `Pedidos na Etapa: ${activeTab}`}
+                  <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                    {externalStageFilter === 'TODOS' ? 'Todos os Pedidos Ativos Neste Dia' : `Pedidos na Etapa: ${stageFilterLabel}`}
                   </span>
-                  <span className="text-[11px] font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full font-bold border border-blue-200">
-                    {filteredOrders.length} resultado(s)
+                  <span className="text-[11px] font-mono text-blue-900 bg-blue-100 px-2.5 py-0.5 rounded-full font-bold border border-blue-300">
+                    {displayedOrders.length} resultado(s)
                   </span>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={handleExportDay}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-full transition-all cursor-pointer shadow-2xs"
-                  >
-                    <Download className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Exportar Excel</span>
-                  </button>
-
-                  {onOpenNewSchedule && currentUser.role !== 'VIEWER' && (
-                    <button
-                      onClick={() => {
-                        onClose();
-                        onOpenNewSchedule(targetDateStr);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-full transition-all cursor-pointer shadow-2xs"
-                      title="Registrar novo cronograma com múltiplas unidades para este dia"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ Criar Cronograma</span>
-                    </button>
-                  )}
-
-                  {onOpenLinkModal && currentUser.role !== 'VIEWER' && (
-                    <button
-                      onClick={() => {
-                        onClose();
-                        onOpenLinkModal();
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-full shadow-xs hover:shadow-md transition-all cursor-pointer"
-                    >
-                      <Link2 className="w-3.5 h-3.5" />
-                      <span>+ Vincular Pedido</span>
-                    </button>
-                  )}
                 </div>
               </div>
 
-              {filteredOrders.length > 0 ? (
-                <div className="bg-white rounded-2xl border border-slate-200/90 overflow-hidden shadow-xs">
+              {displayedOrders.length > 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-300 overflow-hidden shadow-xs">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-50/80 border-b border-slate-200/80 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
+                      <thead className="bg-slate-50 border-b border-slate-300 text-slate-700 font-bold uppercase tracking-wider text-[10px]">
                         <tr>
                           <th className="py-3 px-3.5">Código / Origem</th>
                           <th className="py-3 px-3">Unidade Hospitalar</th>
                           <th className="py-3 px-3">Programa & Tipo</th>
                           <th className="py-3 px-3 text-right">Itens</th>
                           <th className="py-3 px-3">
-                            <span className="flex items-center gap-1 text-blue-800 font-bold">
+                            <span className="flex items-center gap-1 text-blue-900 font-bold">
                               <Sparkles className="w-3 h-3 text-blue-600" />
                               Data Inicialização
                             </span>
@@ -1014,7 +725,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                           <th className="py-3 px-3">Etapa no Dia {dayNumber}</th>
                           <th className="py-3 px-3">Situação SLA</th>
                           <th className="py-3 px-3">
-                            <span className="flex items-center gap-1 text-slate-800 font-bold">
+                            <span className="flex items-center gap-1 text-slate-900 font-bold">
                               <Zap className="w-3.5 h-3.5 text-blue-600" />
                               Status (1-Clique)
                             </span>
@@ -1023,22 +734,23 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                           <th className="py-3 px-3 text-center">Ações</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 font-normal">
-                        {filteredOrders.map(order => {
+                      <tbody className="divide-y divide-slate-200 font-normal">
+                        {displayedOrders.map(order => {
                           const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
                           const { situation, label } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
 
-                          // Identify which stage triggers this order on this day
-                          const isEntregaHoje = matchesDay(order.data_prevista_entrega || order.entregue_em);
-                          const isSepHoje = matchesDay(order.data_inicio_separacao || order.separado_em);
-                          const isExpHoje = matchesDay(order.data_expedicao || order.expedido_em);
-                          const isAprovHoje = matchesDay(order.data_aprovacao || order.validada_em);
-                          const isSolHoje = matchesDay(order.data_solicitacao || order.criado_em);
+                          const isEntregaHoje = matchesDay(order.data_prevista_entrega || sch?.data_entrega);
+                          const isSepHoje = matchesDay(order.data_inicio_separacao || sch?.data_separacao);
+                          const isExpHoje = matchesDay(order.data_expedicao || sch?.data_expedicao);
+                          const isAprovHoje = matchesDay(order.data_aprovacao || sch?.data_limite_aprovacao);
+                          const isSolHoje = matchesDay(sch?.data_limite_solicitacao);
+
+                          const isOrderLinked = Boolean(order.cronograma_id || order.data_prevista_entrega);
 
                           return (
                             <tr 
                               key={order.id}
-                              className="hover:bg-blue-50/40 transition-colors group cursor-pointer"
+                              className="hover:bg-blue-50/50 transition-colors group cursor-pointer"
                               onClick={() => {
                                 onClose();
                                 onSelectOrder?.(order);
@@ -1050,7 +762,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                                     {order.codigo}
                                   </span>
                                   {order.origem === 'MANUAL' && (
-                                    <span className="text-[9px] font-mono text-purple-700 bg-purple-50 px-1.5 py-0.2 rounded-full border border-purple-200">
+                                    <span className="text-[9px] font-mono text-purple-800 bg-purple-100 px-1.5 py-0.2 rounded-md border border-purple-300 font-bold">
                                       MANUAL
                                     </span>
                                   )}
@@ -1058,40 +770,25 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                               </td>
 
                               <td className="py-2.5 px-3 font-semibold text-slate-900 whitespace-nowrap">
-                                <div>
-                                  <span>{order.unidade}</span>
-                                  <span className="text-[10px] text-slate-400 block font-normal">
-                                    {order.solicitante}
-                                  </span>
-                                </div>
+                                {order.unidade}
                               </td>
 
                               <td className="py-2.5 px-3 whitespace-nowrap">
                                 <div className="flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setFilterOrderType(order.tipo);
-                                    }}
-                                    className="cursor-pointer hover:scale-105 active:scale-95 transition-transform"
-                                    title={`Clique para filtrar apenas pedidos do tipo: ${order.tipo}`}
-                                  >
-                                    <TypeTag type={order.tipo} />
-                                  </button>
-                                  <span className="text-slate-400 text-[11px]">
-                                    · {order.programa}
+                                  <TypeTag type={order.tipo} />
+                                  <span className="text-slate-500 text-[11px] truncate max-w-[120px]">
+                                    {order.programa}
                                   </span>
                                 </div>
                               </td>
 
-                              <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-700 tabular-nums">
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-800 tabular-nums">
                                 {order.quantidade_itens}
                               </td>
 
-                              {/* Data de Inicialização (Interactive / Editable) */}
+                              {/* Editable initialization date */}
                               <td 
-                                className="py-2.5 px-3 whitespace-nowrap"
+                                className="py-2 px-3 whitespace-nowrap"
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {editingDateOrderId === order.id ? (
@@ -1100,21 +797,20 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                                       type="date"
                                       value={tempDateValue}
                                       onChange={(e) => setTempDateValue(e.target.value)}
-                                      className="text-xs font-mono bg-white border border-blue-400 rounded-lg px-2 py-1 focus:outline-none"
-                                      autoFocus
+                                      className="text-xs bg-white border border-blue-500 rounded-lg px-2 py-0.5 text-slate-900 font-mono shadow-xs focus:outline-none"
                                     />
                                     <button
                                       type="button"
-                                      onClick={() => handleQuickSetInitialDate(order, tempDateValue)}
-                                      className="p-1 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
-                                      title="Salvar Data de Inicialização"
+                                      onClick={() => handleSaveInitialDate(order)}
+                                      className="p-1 text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 rounded-md"
+                                      title="Salvar"
                                     >
                                       <Check className="w-3.5 h-3.5" />
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => setEditingDateOrderId(null)}
-                                      className="p-1 rounded-md bg-slate-200 text-slate-600 hover:bg-slate-300 cursor-pointer"
+                                      className="p-1 text-slate-400 hover:text-slate-600 rounded-md"
                                       title="Cancelar"
                                     >
                                       <X className="w-3.5 h-3.5" />
@@ -1123,11 +819,11 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                                 ) : (
                                   <div className="flex items-center gap-1.5">
                                     {order.data_inicio ? (
-                                      <span className="font-mono font-bold text-slate-800 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200 text-[11px]">
+                                      <span className="font-mono font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-300 text-[11px]">
                                         {formatShortDate(order.data_inicio)}
                                       </span>
                                     ) : (
-                                      <span className="text-[11px] text-amber-700 font-semibold italic">
+                                      <span className="text-[11px] text-amber-800 font-semibold italic">
                                         Não definida
                                       </span>
                                     )}
@@ -1139,8 +835,8 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                                           setEditingDateOrderId(order.id);
                                           setTempDateValue(order.data_inicio || order.data_solicitacao || targetDateStr);
                                         }}
-                                        className="text-[10px] text-blue-600 hover:text-blue-800 font-bold hover:underline px-1 py-0.5 rounded-md hover:bg-blue-100/60 cursor-pointer"
-                                        title="Definir ou alterar data de inicialização do pedido"
+                                        className="text-[10px] text-blue-700 hover:text-blue-950 font-bold hover:underline px-1 py-0.5 rounded-md hover:bg-blue-100 cursor-pointer"
+                                        title="Definir data de inicialização"
                                       >
                                         {order.data_inicio ? 'Alterar' : '+ Definir'}
                                       </button>
@@ -1149,33 +845,34 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                                 )}
                               </td>
 
+                              {/* Stage on Day */}
                               <td className="py-2.5 px-3 whitespace-nowrap">
                                 <div className="flex flex-wrap gap-1 text-[10px] font-bold">
                                   {isEntregaHoje && (
-                                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                                    <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1">
                                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
                                       <span>Entrega Agendada</span>
                                     </span>
                                   )}
                                   {isSepHoje && (
-                                    <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-200 flex items-center gap-1">
+                                    <span className="px-2 py-0.5 rounded-lg bg-purple-100 text-purple-900 border border-purple-300 flex items-center gap-1">
                                       <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
                                       <span>Separação</span>
                                     </span>
                                   )}
                                   {isExpHoje && (
-                                    <span className="px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 border border-cyan-200 flex items-center gap-1">
+                                    <span className="px-2 py-0.5 rounded-lg bg-cyan-100 text-cyan-900 border border-cyan-300 flex items-center gap-1">
                                       <span className="w-1.5 h-1.5 rounded-full bg-cyan-600" />
                                       <span>Expedição</span>
                                     </span>
                                   )}
                                   {isAprovHoje && !isEntregaHoje && !isSepHoje && (
-                                    <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                                    <span className="px-2 py-0.5 rounded-lg bg-amber-100 text-amber-900 border border-amber-300">
                                       Aprovação
                                     </span>
                                   )}
                                   {isSolHoje && !isEntregaHoje && !isSepHoje && !isExpHoje && !isAprovHoje && (
-                                    <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                                    <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-900 border border-blue-300">
                                       Solicitação
                                     </span>
                                   )}
@@ -1206,24 +903,28 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                                 className="py-2 px-3 text-center whitespace-nowrap"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <div className="flex items-center justify-center gap-1">
-                                  <button
-                                    onClick={() => handleShiftOrderDate(order, -1)}
-                                    disabled={currentUser.role === 'VIEWER'}
-                                    className="px-2 py-0.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-mono text-[10px] font-bold transition-colors cursor-pointer"
-                                    title="Antecipar entrega em 1 dia"
-                                  >
-                                    -1d
-                                  </button>
-                                  <button
-                                    onClick={() => handleShiftOrderDate(order, 1)}
-                                    disabled={currentUser.role === 'VIEWER'}
-                                    className="px-2 py-0.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-mono text-[10px] font-bold transition-colors cursor-pointer"
-                                    title="Postergar entrega em 1 dia"
-                                  >
-                                    +1d
-                                  </button>
-                                </div>
+                                {currentUser.role !== 'VIEWER' ? (
+                                  <div className="inline-flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-300">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleShiftDate(order, -1)}
+                                      className="px-1.5 py-0.5 text-[10px] font-bold text-slate-700 hover:text-slate-950 hover:bg-white rounded transition-colors cursor-pointer"
+                                      title="Reagendar para o dia anterior (-1 dia)"
+                                    >
+                                      -1d
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleShiftDate(order, 1)}
+                                      className="px-1.5 py-0.5 text-[10px] font-bold text-slate-700 hover:text-slate-950 hover:bg-white rounded transition-colors cursor-pointer"
+                                      title="Reagendar para o próximo dia (+1 dia)"
+                                    >
+                                      +1d
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 font-mono">—</span>
+                                )}
                               </td>
 
                               {/* Actions */}
@@ -1237,20 +938,20 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                                       onClose();
                                       onSelectOrder?.(order);
                                     }}
-                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold text-blue-700 hover:bg-blue-100/70 border border-blue-200 transition-all cursor-pointer"
-                                    title="Ver linha do tempo completa e detalhes"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-blue-700 hover:bg-blue-100 border border-blue-300 transition-all cursor-pointer"
+                                    title="Ver detalhes completos"
                                   >
                                     <ExternalLink className="w-3 h-3" />
                                     <span>Ver</span>
                                   </button>
 
-                                   {currentUser.role !== 'VIEWER' && (
+                                  {currentUser.role !== 'VIEWER' && isOrderLinked && (
                                     <button
                                       onClick={async () => {
                                         await unlinkOrder(order.id, currentUser, `Desvinculado no modal do dia ${dayNumber}/${monthStr}/2026`);
                                         showToast('info', `${order.codigo} desvinculado`, 'Data e cronograma foram removidos do pedido.');
                                       }}
-                                      className="p-1 text-slate-400 hover:text-rose-600 rounded-full hover:bg-rose-50 transition-colors cursor-pointer"
+                                      className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
                                       title="Desvincular pedido deste dia e cronograma"
                                     >
                                       <Unlink className="w-3.5 h-3.5" />
@@ -1266,8 +967,8 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="p-12 text-center text-xs text-slate-400 italic bg-slate-50 rounded-2xl border border-slate-200/60">
-                  Nenhum pedido encontrado para os filtros selecionados neste dia.
+                <div className="p-12 text-center text-xs text-slate-500 italic bg-slate-50 rounded-2xl border border-slate-300">
+                  Nenhum pedido encontrado para os filtros ativos do calendário neste dia.
                 </div>
               )}
             </div>
@@ -1275,9 +976,9 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="p-3.5 sm:p-4 border-t border-slate-200 bg-slate-50/90 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-          <div className="text-slate-500 font-medium">
-            Exibindo <span className="font-mono font-bold text-slate-800">{filteredOrders.length}</span> pedido(s) correspondente(s) ao dia <span className="font-mono font-bold text-blue-700">{dayNumber}/{monthStr}/2026</span>
+        <div className="p-3.5 sm:p-4 border-t border-slate-300 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          <div className="text-slate-600 font-medium">
+            Exibindo <span className="font-mono font-bold text-slate-900">{displayedOrders.length}</span> pedido(s) ativo(s) no dia <span className="font-mono font-bold text-blue-800">{dayNumber}/{monthStr}/2026</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1285,7 +986,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
               <button
                 type="button"
                 onClick={() => setIsUnlinkConfirmOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-full transition-all cursor-pointer shadow-2xs hover:shadow-xs"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-xl transition-all cursor-pointer shadow-2xs hover:shadow-xs"
                 title={`Desvincular todos os ${dayCategorized.todos.length} pedidos do dia ${dayNumber}/${monthStr}`}
               >
                 <Unlink className="w-3.5 h-3.5 text-rose-600" />
@@ -1295,7 +996,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
 
             <button
               onClick={handleExportDay}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-full transition-all cursor-pointer shadow-2xs"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl transition-all cursor-pointer shadow-2xs"
             >
               <Download className="w-3.5 h-3.5 text-emerald-600" />
               <span>Exportar Romaneio</span>
@@ -1303,7 +1004,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
 
             <button
               onClick={onClose}
-              className="px-5 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-full transition-all cursor-pointer shadow-2xs active:scale-95"
+              className="px-5 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95"
             >
               Fechar Visualização
             </button>
@@ -1314,11 +1015,11 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       {/* Confirmation Modal to Unlink All Orders of the Day */}
       {isUnlinkConfirmOpen && (
         <div 
-          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in duration-150"
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/70 animate-in fade-in duration-150"
           onClick={() => !isUnlinking && setIsUnlinkConfirmOpen(false)}
         >
           <div 
-            className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150"
+            className="bg-white rounded-3xl shadow-2xl border border-slate-300 max-w-md w-full p-6 space-y-4 animate-in zoom-in-95 duration-150"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-start gap-3.5">
@@ -1326,54 +1027,50 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                 <Unlink className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-slate-900">
+                <h3 className="text-base font-bold text-slate-950">
                   Desvincular Pedidos do Dia {dayNumber}/{monthStr}/2026?
                 </h3>
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-slate-600 mt-1">
                   Esta ação irá desvincular <strong>{dayCategorized.todos.length} pedido(s)</strong> atualmente programados para este dia.
                 </p>
               </div>
             </div>
 
-            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2.5 text-xs text-slate-700">
-              <div className="font-semibold text-slate-800 flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4 text-amber-500" />
+            <div className="bg-slate-50 border border-slate-300 rounded-2xl p-3.5 space-y-2.5 text-xs text-slate-800">
+              <div className="flex items-center gap-1.5 font-bold text-slate-900">
+                <Boxes className="w-3.5 h-3.5 text-blue-600" />
                 <span>Opções de Desvinculação:</span>
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input 
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
                   type="checkbox"
                   checked={unlinkOptions.clearDeliveryDate}
-                  onChange={e => setUnlinkOptions(prev => ({ ...prev, clearDeliveryDate: e.target.checked }))}
-                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                  onChange={(e) => setUnlinkOptions(prev => ({ ...prev, clearDeliveryDate: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-slate-600">Remover data prevista de entrega / agendamento do dia</span>
+                <span className="text-slate-700">Limpar data prevista de entrega dos pedidos</span>
               </label>
 
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input 
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
                   type="checkbox"
                   checked={unlinkOptions.clearSchedule}
-                  onChange={e => setUnlinkOptions(prev => ({ ...prev, clearSchedule: e.target.checked }))}
-                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                  onChange={(e) => setUnlinkOptions(prev => ({ ...prev, clearSchedule: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-slate-600">Remover vínculo com o cronograma de entrega oficial</span>
+                <span className="text-slate-700">Remover vínculo com o Cronograma Oficial</span>
               </label>
 
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input 
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
                   type="checkbox"
                   checked={unlinkOptions.clearStageDates}
-                  onChange={e => setUnlinkOptions(prev => ({ ...prev, clearStageDates: e.target.checked }))}
-                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
+                  onChange={(e) => setUnlinkOptions(prev => ({ ...prev, clearStageDates: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-slate-600">Limpar etapas operacionais vinculadas a este dia</span>
+                <span className="text-slate-700">Limpar etapas operacionais vinculadas a este dia</span>
               </label>
-            </div>
-
-            <div className="p-3 bg-amber-50/70 border border-amber-200/70 rounded-2xl text-[11px] text-amber-800 leading-relaxed">
-              <strong>Aviso:</strong> Os pedidos <strong>não</strong> serão excluídos do sistema. Eles continuarão registrados no banco de dados e no histórico operacional, mas ficarão livres para novo agendamento no calendário.
             </div>
 
             <div className="flex items-center justify-end gap-2.5 pt-2">
@@ -1381,22 +1078,19 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                 type="button"
                 onClick={() => setIsUnlinkConfirmOpen(false)}
                 disabled={isUnlinking}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+                className="px-4 py-2 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
               >
                 Cancelar
               </button>
 
               <button
                 type="button"
-                onClick={handleUnlinkAllOrders}
+                onClick={handleConfirmBatchUnlink}
                 disabled={isUnlinking}
-                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-full transition-all cursor-pointer shadow-xs active:scale-95"
+                className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-xl transition-all cursor-pointer shadow-xs active:scale-95"
               >
                 {isUnlinking ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Desvinculando...</span>
-                  </>
+                  <span>Desvinculando...</span>
                 ) : (
                   <>
                     <Unlink className="w-3.5 h-3.5" />

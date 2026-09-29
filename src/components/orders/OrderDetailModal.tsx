@@ -86,23 +86,24 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
   const { situation, label } = calculateDeadlineSituation(order, schedule, settings.horas_alerta_atencao);
 
   const handleSaveDatesAndSchedule = () => {
+    const isUnlinking = selectedScheduleId === 'NONE';
     const updates: Partial<Order> = {
-      cronograma_id: selectedScheduleId === 'NONE' ? undefined : selectedScheduleId,
-      cronograma_vinculo: selectedScheduleId === 'NONE' ? 'NENHUM' : 'MANUAL',
-      data_inicio: dataInicio || undefined,
+      cronograma_id: isUnlinking ? undefined : selectedScheduleId,
+      cronograma_vinculo: isUnlinking ? 'NENHUM' : 'MANUAL',
+      data_inicio: isUnlinking ? undefined : (dataInicio || undefined),
       data_solicitacao: dataSolicitacao || undefined,
-      data_aprovacao: dataAprovacao || undefined,
-      data_inicio_separacao: dataInicioSeparacao || undefined,
-      data_expedicao: dataExpedicao || undefined,
-      data_prevista_entrega: dataPrevistaEntrega || undefined,
-      validada_em: dataAprovacao ? `${dataAprovacao} 10:00` : order.validada_em,
-      separado_em: dataInicioSeparacao ? `${dataInicioSeparacao} 14:00` : order.separado_em,
-      expedido_em: dataExpedicao ? `${dataExpedicao} 16:00` : order.expedido_em,
-      entregue_em: (order.status_operacional === 'Entregue' && dataPrevistaEntrega) ? `${dataPrevistaEntrega} 17:00` : order.entregue_em,
+      data_aprovacao: isUnlinking ? undefined : (dataAprovacao || undefined),
+      data_inicio_separacao: isUnlinking ? undefined : (dataInicioSeparacao || undefined),
+      data_expedicao: isUnlinking ? undefined : (dataExpedicao || undefined),
+      data_prevista_entrega: isUnlinking ? undefined : (dataPrevistaEntrega || undefined),
+      validada_em: !isUnlinking && dataAprovacao ? `${dataAprovacao} 10:00` : (isUnlinking ? undefined : order.validada_em),
+      separado_em: !isUnlinking && dataInicioSeparacao ? `${dataInicioSeparacao} 14:00` : (isUnlinking ? undefined : order.separado_em),
+      expedido_em: !isUnlinking && dataExpedicao ? `${dataExpedicao} 16:00` : (isUnlinking ? undefined : order.expedido_em),
+      entregue_em: !isUnlinking && (order.status_operacional === 'Entregue' && dataPrevistaEntrega) ? `${dataPrevistaEntrega} 17:00` : (isUnlinking ? undefined : order.entregue_em),
     };
 
-    updateOrder(order.id, updates, currentUser, 'Atualização das datas operacionais e inicialização do pedido');
-    showToast('success', `${order.codigo} atualizado`, 'Data de inicialização, solicitação e ciclo operacional salvas com sucesso.');
+    updateOrder(order.id, updates, currentUser, isUnlinking ? 'Desvinculação manual do cronograma' : 'Atualização das datas operacionais e cronograma');
+    showToast('success', `${order.codigo} atualizado`, isUnlinking ? 'Pedido desvinculado do cronograma com sucesso.' : 'Data de inicialização, solicitação e ciclo operacional salvas com sucesso.');
   };
 
   const handleQuickStatusChange = (newStatus: OrderStatus) => {
@@ -206,7 +207,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60">
       <div 
         className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
@@ -359,7 +360,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
                   </h4>
                   <div className="space-y-1.5 text-xs">
                     <p><span className="text-slate-500 font-medium">Situação SLA:</span> <DeadlineBadge situation={situation} label={label} /></p>
-                    <p><span className="text-slate-500 font-medium">Cronograma Vinculado:</span> <strong>{schedule ? schedule.nome : (order.cronograma_vinculo || 'Sob Demanda')}</strong></p>
+                    <p><span className="text-slate-500 font-medium">Cronograma Vinculado:</span> <strong>{schedule ? schedule.nome : <span className="text-slate-500 font-semibold italic">Nenhum (Desvinculado)</span>}</strong></p>
                     <p><span className="text-slate-500 font-medium">Data Prevista de Entrega:</span> <strong className="font-mono text-blue-700">{dataPrevistaEntrega ? formatShortDate(dataPrevistaEntrega) : 'Não agendada'}</strong></p>
                     <p><span className="text-slate-500 font-medium">Validador SESAU:</span> <span>{order.validador || 'Pendente de validação'}</span></p>
                   </div>

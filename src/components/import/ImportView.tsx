@@ -26,6 +26,7 @@ export const ImportView: React.FC = () => {
   const { orders, importRecords, processImport, currentUser } = useStore();
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isSavingToDb, setIsSavingToDb] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ImportAnalysis | null>(null);
   const [activeFilterTab, setActiveFilterTab] = useState<'ALL' | 'NOVO' | 'ATUALIZAR' | 'SEM_ALTERACAO' | 'ERRO'>('ALL');
@@ -58,11 +59,20 @@ export const ImportView: React.FC = () => {
     }
   };
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     if (!analysis) return;
-    const record = processImport(analysis, currentUser);
-    setSuccessMsg(`Importação de "${analysis.fileName}" concluída com sucesso: ${record.novos} novos pedidos e ${record.atualizados} atualizados.`);
-    setAnalysis(null);
+    setIsSavingToDb(true);
+    setErrorMsg(null);
+    try {
+      const record = await processImport(analysis, currentUser);
+      setSuccessMsg(`Importação de "${analysis.fileName}" concluída com sucesso! Os pedidos e o histórico foram gravados e alimentaram o banco de dados (${record.novos} novos e ${record.atualizados} atualizados).`);
+      setAnalysis(null);
+    } catch (err: unknown) {
+      console.error('Import error:', err);
+      setErrorMsg(err instanceof Error ? err.message : 'Falha ao alimentar o banco de dados com a planilha.');
+    } finally {
+      setIsSavingToDb(false);
+    }
   };
 
   const handleDownloadSampleTemplate = () => {
@@ -325,18 +335,28 @@ export const ImportView: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setAnalysis(null)}
-                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors"
+                disabled={isSavingToDb}
+                className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50 border border-slate-300 rounded-lg transition-colors cursor-pointer"
               >
                 Cancelar
               </button>
 
               <button
                 onClick={handleConfirmImport}
-                disabled={currentUser.role === 'VIEWER'}
-                className="px-4 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
+                disabled={currentUser.role === 'VIEWER' || isSavingToDb}
+                className="px-4 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg shadow-xs transition-all flex items-center gap-1.5 cursor-pointer active:scale-98"
               >
-                <FileCheck className="w-4 h-4" />
-                <span>Confirmar e Importar ({analysis.totalFound} registros)</span>
+                {isSavingToDb ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                    <span>Gravando no Banco de Dados...</span>
+                  </>
+                ) : (
+                  <>
+                    <FileCheck className="w-4 h-4 text-white" />
+                    <span>Confirmar e Alimentar Banco ({analysis.totalFound} registros)</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

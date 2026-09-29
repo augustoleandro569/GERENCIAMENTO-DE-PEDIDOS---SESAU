@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../../hooks/useStore';
 import { UserRole } from '../../types';
+import { SesauLogo } from '../common/Logo';
 import { 
   Search, 
   Bell, 
@@ -47,24 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between sticky top-0 z-30 shadow-xs">
       {/* Zone 1: Breadcrumb & Title */}
-      <div className="flex items-center gap-3 min-w-[240px]">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white font-black text-sm shadow-xs tracking-tighter">
-          HF
-        </div>
-        <div>
-          <div className="flex items-center gap-1.5">
-            <h1 className="text-sm font-bold text-slate-900 leading-tight">
-              HOSPIFLOW
-            </h1>
-            <span className="text-[9px] font-mono font-bold bg-blue-50 text-blue-700 px-1 py-0.2 rounded border border-blue-200">
-              SESAU
-            </span>
-          </div>
-          <p className="text-[11px] text-slate-500 font-medium">
-            Gestão Integrada de Pedidos Hospitalares
-          </p>
-        </div>
-      </div>
+      <SesauLogo size="sm" />
 
       {/* Zone 2: Global Search Bar */}
       <div className="flex-1 max-w-xl mx-8">
