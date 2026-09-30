@@ -651,8 +651,8 @@ class DatabaseSyncService {
     // 1. Persist directly to Firestore using writeBatch
     try {
       // Save Import Record
-      if (importRecord) {
-        const recordDocRef = doc(db, 'import_records', importRecord.id);
+      if (importRecord && importRecord.id) {
+        const recordDocRef = doc(db, 'import_records', String(importRecord.id));
         await setDoc(recordDocRef, sanitizeForFirestore(importRecord), { merge: true });
       }
 
@@ -664,7 +664,8 @@ class DatabaseSyncService {
           const batch = writeBatch(db);
 
           for (const order of chunk) {
-            const orderDocRef = doc(db, 'orders', order.id);
+            if (!order || !order.id) continue;
+            const orderDocRef = doc(db, 'orders', String(order.id));
             batch.set(orderDocRef, sanitizeForFirestore(order), { merge: true });
           }
 
@@ -680,7 +681,8 @@ class DatabaseSyncService {
           const chunk = auditLogsToSave.slice(i, i + BATCH_SIZE);
           const batch = writeBatch(db);
           for (const log of chunk) {
-            const logDocRef = doc(db, 'audit_logs', log.id);
+            if (!log || !log.id) continue;
+            const logDocRef = doc(db, 'audit_logs', String(log.id));
             batch.set(logDocRef, sanitizeForFirestore(log), { merge: true });
           }
           await batch.commit();

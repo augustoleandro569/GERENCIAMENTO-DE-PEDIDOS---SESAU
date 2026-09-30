@@ -492,6 +492,56 @@ export const ImportView: React.FC = () => {
             </div>
           </div>
 
+          {/* Intelligent Column Mapping & Status Breakdown Banner */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-slate-700">Mapeamento Inteligente de Status:</span>
+                <span className="px-2 py-0.5 rounded-md font-mono font-bold bg-white border border-slate-300 text-slate-800">
+                  {analysis.detectedStatusHeader ? `Coluna "${analysis.detectedStatusHeader}"` : 'Padrão Inicial'}
+                </span>
+                {analysis.detectedConfidence && (
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                    analysis.detectedConfidence === 'ALTA' 
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                      : analysis.detectedConfidence === 'MÉDIA' 
+                      ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                      : 'bg-slate-200 text-slate-700'
+                  }`}>
+                    Confiança: {analysis.detectedConfidence}
+                  </span>
+                )}
+              </div>
+              <span className="text-[11px] text-slate-500">
+                Terminologias de ERPs e planilhas hospitalares normalizadas para o ciclo oficial
+              </span>
+            </div>
+
+            {/* Distribution of statuses in this file */}
+            {analysis.statusBreakdown && Object.keys(analysis.statusBreakdown).length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/60">
+                <span className="text-[11px] font-semibold text-slate-600 mr-1">Status lidos no arquivo:</span>
+                {Object.entries(analysis.statusBreakdown).map(([st, count]) => (
+                  <span 
+                    key={st}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border ${
+                      st === 'Entregue' 
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200 font-bold'
+                        : st === 'Em Separação' || st === 'Aguardando Separação'
+                        ? 'bg-purple-50 text-purple-800 border-purple-200'
+                        : st === 'Em Transporte' || st === 'Expedida'
+                        ? 'bg-amber-50 text-amber-800 border-amber-200'
+                        : 'bg-blue-50 text-blue-800 border-blue-200'
+                    }`}
+                  >
+                    <span>{st}:</span>
+                    <strong className="font-mono">{count}</strong>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Filter tabs for diff table */}
           <div className="flex items-center gap-2 border-b border-slate-200 text-xs">
             {[
