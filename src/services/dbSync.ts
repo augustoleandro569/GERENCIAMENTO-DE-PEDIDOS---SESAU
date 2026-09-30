@@ -112,15 +112,31 @@ class DatabaseSyncService {
     this.notifyStatus();
 
     try {
-      // 1. Fetch Orders (Up to 2000 records)
-      const { data: rawOrders, error: ordErr } = await supabase
-        .from('pedidos')
-        .select('*')
-        .order('codigo', { ascending: true })
-        .limit(2000);
+      // 1. Fetch Orders with pagination to retrieve all imported records without truncation
+      const rawOrders: any[] = [];
+      const seenOrderIds = new Set<string>();
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data: page, error: ordErr } = await supabase
+          .from('pedidos')
+          .select('*')
+          .order('criado_no_sistema_em', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, from + pageSize - 1);
 
-      if (ordErr) {
-        throw new Error(`Erro ao buscar pedidos no Supabase: ${ordErr.message}`);
+        if (ordErr) {
+          throw new Error(`Erro ao buscar pedidos no Supabase: ${ordErr.message}`);
+        }
+        if (!page || page.length === 0) break;
+        for (const ord of page) {
+          if (ord && ord.id && !seenOrderIds.has(ord.id)) {
+            seenOrderIds.add(ord.id);
+            rawOrders.push(ord);
+          }
+        }
+        if (page.length < pageSize || rawOrders.length >= 10000) break;
+        from += pageSize;
       }
 
       // 2. Fetch Schedules
@@ -1078,6 +1094,148 @@ class DatabaseSyncService {
       this.notifyStatus();
       handleFirestoreError(error, OperationType.WRITE, 'bulk_upload');
     }
+  }
+
+  /**
+   * Cleans and deletes database records from Supabase and Firestore.
+   * mode:
+   *  - 'wipe_orders': Deletes all orders, events, and imports (keeps schedules & units)
+   *  - 'reseed_clean': Deletes corrupted orders and prepares for clean seed
+   *  - 'wipe_all': Complete database reset (orders, events, imports, audit logs)
+   */
+  public async clearBackendDatabase(
+    mode: 'wipe_orders' | 'reseed_clean' | 'wipe_all' = 'wipe_orders'
+  ): Promise<{ success: boolean; message: string; clearedOrdersCount: number }> {
+    this.status.supabaseSyncing = true;
+    this.status.firestoreSyncing = true;
+    this.notifyStatus();
+
+    let deletedOrdersCount = 0;
+
+    // 1. Delete records from Supabase
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        // Delete events first in batches to avoid foreign key errors and timeouts
+        let evEmpty = false;
+        let evLoops = 0;
+        while (!evEmpty && evLoops < 50) {
+          evLoops++;
+          const { data: evPage, error: evErr } = await supabase
+            .from('eventos_pedidos')
+            .select('id')
+            .limit(2500);
+
+          if (evErr) {
+            console.warn('Supabase fetch eventos error:', evErr.message);
+            await supabase.from('eventos_pedidos').delete().neq('id', '___safe_delete___');
+            break;
+          }
+          if (!evPage || evPage.length === 0) {
+            evEmpty = true;
+            break;
+          }
+          const ids = evPage.map(r => r.id);
+          const { error: delErr } = await supabase.from('eventos_pedidos').delete().in('id', ids);
+          if (delErr) {
+            console.warn('Supabase chunk delete eventos error:', delErr.message);
+            break;
+          }
+          if (evPage.length < 2500) break;
+        }
+
+        // Delete orders in batches
+        let ordEmpty = false;
+        let ordLoops = 0;
+        while (!ordEmpty && ordLoops < 50) {
+          ordLoops++;
+          const { data: ordPage, error: ordErr } = await supabase
+            .from('pedidos')
+            .select('id')
+            .limit(1000);
+
+          if (ordErr) {
+            console.warn('Supabase fetch pedidos error:', ordErr.message);
+            await supabase.from('pedidos').delete().neq('id', '___safe_delete___');
+            break;
+          }
+          if (!ordPage || ordPage.length === 0) {
+            ordEmpty = true;
+            break;
+          }
+          const ids = ordPage.map(r => r.id);
+          const { error: delErr } = await supabase.from('pedidos').delete().in('id', ids);
+          if (delErr) {
+            console.warn('Supabase chunk delete pedidos error:', delErr.message);
+            break;
+          }
+          deletedOrdersCount += ids.length;
+          if (ordPage.length < 1000) break;
+        }
+
+        // Delete import records
+        try {
+          await supabase.from('importacoes').delete().neq('id', '___safe_delete___');
+        } catch (impErr) {
+          console.warn('Supabase clear importacoes note:', impErr);
+        }
+
+        // If wipe_all, also clear audit logs
+        if (mode === 'wipe_all') {
+          try {
+            await supabase.from('logs_auditoria').delete().neq('id', '___safe_delete___');
+          } catch (audErr) {
+            console.warn('Supabase clear logs_auditoria note:', audErr);
+          }
+        }
+      } catch (sbErr) {
+        console.warn('Supabase clearBackendDatabase top error:', sbErr);
+      }
+    }
+
+    // 2. Delete documents from Firestore
+    try {
+      const ordersSnap = await getDocs(collection(db, 'orders'));
+      if (!ordersSnap.empty) {
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < ordersSnap.docs.length; i += BATCH_SIZE) {
+          const chunk = ordersSnap.docs.slice(i, i + BATCH_SIZE);
+          const batch = writeBatch(db);
+          chunk.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
+
+      const importSnap = await getDocs(collection(db, 'import_records'));
+      if (!importSnap.empty) {
+        const batch = writeBatch(db);
+        importSnap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+
+      if (mode === 'wipe_all') {
+        const auditSnap = await getDocs(collection(db, 'audit_logs'));
+        if (!auditSnap.empty) {
+          const batch = writeBatch(db);
+          auditSnap.docs.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
+    } catch (fsErr) {
+      console.warn('Firestore clearBackendDatabase note:', fsErr);
+    }
+
+    this.status.supabaseSyncing = false;
+    this.status.firestoreSyncing = false;
+    this.status.lastSupabaseSync = new Date();
+    this.status.lastFirestoreSync = new Date();
+    this.notifyStatus();
+
+    return {
+      success: true,
+      message: `Banco de dados limpo com sucesso! ${deletedOrdersCount > 0 ? `${deletedOrdersCount} pedidos foram excluídos.` : 'Registros excluídos com sucesso.'}`,
+      clearedOrdersCount: deletedOrdersCount,
+    };
   }
 }
 

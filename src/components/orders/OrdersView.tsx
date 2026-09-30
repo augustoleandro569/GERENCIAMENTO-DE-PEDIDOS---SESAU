@@ -645,12 +645,12 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100 font-normal">
                 {paginatedOrders.length > 0 ? (
-                  paginatedOrders.map((order) => {
+                  paginatedOrders.map((order, idx) => {
                     const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
                     const { situation, label, targetDate } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
                     return (
                       <tr
-                        key={order.id}
+                        key={`${order.id}-${idx}`}
                         className="hover:bg-blue-50/40 transition-colors group cursor-pointer"
                         onClick={() => onSelectOrder(order)}
                       >
@@ -832,14 +832,14 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
                   {/* Cards Scroll Container */}
                   <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                    {colOrders.map((order) => {
+                    {colOrders.map((order, idx) => {
                       const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
                       const { situation, label, targetDate } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
                       const isBeingDragged = draggedOrderId === order.id;
 
                       return (
                         <div
-                          key={order.id}
+                          key={`${order.id}-${idx}`}
                           draggable={currentUser.role !== 'VIEWER'}
                           onDragStart={(e) => {
                             e.dataTransfer.setData('text/plain', order.id);

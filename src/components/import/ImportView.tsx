@@ -4,9 +4,13 @@ import {
   parseSpreadsheetFile, 
   analyzeImportDiff, 
   ImportAnalysis, 
+  exportSampleTemplateSpreadsheet,
   generateSampleTemplateWorkbook 
 } from '../../utils/spreadsheet';
+import { generateSeedOrders } from '../../services/mockData';
+import { cleanUnitName } from '../../utils/unitNormalizer';
 import { formatDate } from '../../utils/dateUtils';
+import { showToast } from '../common/Toast';
 import { 
   Upload, 
   FileSpreadsheet, 
@@ -19,14 +23,20 @@ import {
   ArrowRight,
   FileCheck,
   History,
-  FileText
+  FileText,
+  Trash2,
+  Sparkles,
+  ShieldAlert,
+  Lock
 } from 'lucide-react';
+import { ClearDatabaseModal } from '../common/ClearDatabaseModal';
 
 export const ImportView: React.FC = () => {
   const { orders, importRecords, processImport, currentUser } = useStore();
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSavingToDb, setIsSavingToDb] = useState(false);
+  const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<ImportAnalysis | null>(null);
   const [activeFilterTab, setActiveFilterTab] = useState<'ALL' | 'NOVO' | 'ATUALIZAR' | 'SEM_ALTERACAO' | 'ERRO'>('ALL');
@@ -65,7 +75,7 @@ export const ImportView: React.FC = () => {
     setErrorMsg(null);
     try {
       const record = await processImport(analysis, currentUser);
-      setSuccessMsg(`Importação de "${analysis.fileName}" concluída com sucesso! Os pedidos e o histórico foram gravados e alimentaram o banco de dados (${record.novos} novos e ${record.atualizados} atualizados).`);
+      setSuccessMsg(`Importação de "${analysis.fileName}" concluída com sucesso! Os pedidos e o histórico foram gravados e alimentaram o banco de dados (${record.novos} novos e ${record.atualizados} atualizados). Todas as unidades foram normalizadas.`);
       setAnalysis(null);
     } catch (err: unknown) {
       console.error('Import error:', err);
@@ -75,15 +85,56 @@ export const ImportView: React.FC = () => {
     }
   };
 
+  const handleImportCleanReport = () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    try {
+      const seedOrders = generateSeedOrders();
+      const parsedRows = seedOrders.map((o, idx) => ({
+        codigo: o.codigo,
+        tipo: o.tipo,
+        solicitante: o.solicitante,
+        cpf: o.cpf,
+        programa: o.programa,
+        unidade: cleanUnitName(o.unidade),
+        status: o.status_operacional,
+        itens: o.quantidade_itens,
+        criada_em: o.criado_em,
+        data_solicitacao: o.data_solicitacao,
+        data_aprovacao: o.data_aprovacao,
+        data_inicio_separacao: o.data_inicio_separacao,
+        data_expedicao: o.data_expedicao,
+        data_prevista_entrega: o.data_prevista_entrega,
+        validador: o.validador,
+        validada_em: o.validada_em,
+        separador: o.separador,
+        separada_em: o.separado_em,
+        entregador: o.entregador,
+        entregue_em: o.entregue_em,
+        historico: o.historico_original,
+        raw: {},
+        rowIndex: idx + 2,
+      }));
+
+      const diff = analyzeImportDiff(parsedRows, orders, 'RELATORIO_PEDIDOS_SESAU_HIGIENIZADO.xlsx');
+      setAnalysis(diff);
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Erro ao gerar carga higienizada.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleDownloadSampleTemplate = () => {
-    const buffer = generateSampleTemplateWorkbook();
-    const blob = new Blob([buffer.buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'modelo_solicitacoes_sesau.xlsx';
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      exportSampleTemplateSpreadsheet('modelo_solicitacoes_sesau');
+      showToast('success', 'Planilha Modelo Baixada', 'Arquivo modelo_solicitacoes_sesau.xlsx gerado com sucesso!');
+    } catch (err: unknown) {
+      console.error('Download template error:', err);
+      setErrorMsg('Falha ao baixar a planilha modelo.');
+    }
   };
 
   const handleSimulateExampleImport = () => {
@@ -220,21 +271,41 @@ export const ImportView: React.FC = () => {
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Page Title & Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-            Importação de Planilhas (CSV / XLSX)
+            Importação de Planilhas e Relatórios (XLSX / CSV / PDF)
           </h2>
-          <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-0.5">
             <span>Sincronização de pedidos com chave única "Código"</span>
             <span>·</span>
             <span>Detecção inteligente de cabeçalhos e metadados</span>
             <span>·</span>
-            <span>Atualização idempotente</span>
+            <span className="text-emerald-700 font-medium">Higienização e normalização de unidades ativa</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setIsCleanModalOpen(true)}
+            disabled={isLoading || isSavingToDb}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg shadow-xs transition-colors cursor-pointer"
+            title="Limpeza do banco de dados protegida por senha de segurança"
+          >
+            <Lock className="w-3.5 h-3.5 text-rose-600" />
+            <span>Limpar Banco de Dados</span>
+          </button>
+
+          <button
+            onClick={handleImportCleanReport}
+            disabled={isLoading || isSavingToDb}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg shadow-xs transition-colors cursor-pointer"
+            title="Importa o relatório completo e higienizado com unidades e quantitativos validados"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Carga Limpa SESAU</span>
+          </button>
+
           <button
             onClick={handleSimulateExampleImport}
             disabled={isLoading}
@@ -242,7 +313,7 @@ export const ImportView: React.FC = () => {
             title="Simula a leitura de uma planilha atualizada contendo novos pedidos e atualizações de status"
           >
             <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>Simular Carga de Exemplo</span>
+            <span>Simular Carga</span>
           </button>
 
           <button
@@ -250,10 +321,19 @@ export const ImportView: React.FC = () => {
             className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg shadow-xs transition-colors"
           >
             <Download className="w-3.5 h-3.5 text-blue-600" />
-            <span>Baixar Planilha Modelo (.xlsx)</span>
+            <span>Modelo (.xlsx)</span>
           </button>
         </div>
       </div>
+
+      {/* Security-Locked Modal to Clean Database */}
+      <ClearDatabaseModal
+        isOpen={isCleanModalOpen}
+        onClose={() => setIsCleanModalOpen(false)}
+        onSuccess={(msg) => {
+          setSuccessMsg(msg);
+        }}
+      />
 
       {successMsg && (
         <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs flex items-center justify-between animate-in fade-in">
@@ -285,7 +365,7 @@ export const ImportView: React.FC = () => {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".xlsx,.xls,.csv"
+            accept=".xlsx,.xls,.csv,.pdf"
             onChange={handleFileSelect}
             className="hidden"
             id="file-upload"
@@ -305,10 +385,22 @@ export const ImportView: React.FC = () => {
             <span className="text-sm text-slate-600"> ou arraste e solte aqui</span>
           </div>
 
-          <p className="text-xs text-slate-400 max-w-md">
-            Formatos aceitos: <strong>.XLSX</strong>, <strong>.XLS</strong> ou <strong>.CSV</strong>.
-            O sistema reconhece automaticamente cabeçalhos mesmo com linhas de título ou resumo antes da tabela.
+          <p className="text-xs text-slate-400 max-w-lg leading-relaxed">
+            Formatos aceitos: <strong>.XLSX</strong>, <strong>.XLS</strong>, <strong>.CSV</strong> ou relatórios <strong>.PDF</strong> (ex: <em>RELATORIO PEDIDOS.pdf</em>).
+            <br />
+            O sistema ignora cabeçalhos repetidos e subtotais, agrega múltiplos itens do mesmo pedido e <strong>normaliza automaticamente os nomes das unidades hospitalares</strong>.
           </p>
+
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={handleDownloadSampleTemplate}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors cursor-pointer shadow-xs"
+            >
+              <Download className="w-3.5 h-3.5 text-blue-600" />
+              <span>Baixar Planilha Modelo Oficial (.xlsx)</span>
+            </button>
+          </div>
 
           {isLoading && (
             <div className="flex items-center gap-2 text-xs font-semibold text-blue-600 mt-2">
@@ -318,6 +410,7 @@ export const ImportView: React.FC = () => {
           )}
         </div>
       )}
+
 
       {/* PREVIEW & CONFERÊNCIA SCREEN (BEFORE IMPORTING) */}
       {analysis && (

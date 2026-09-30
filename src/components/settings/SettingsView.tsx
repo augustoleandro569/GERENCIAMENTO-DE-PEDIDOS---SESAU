@@ -10,8 +10,12 @@ import {
   Plus, 
   Layers, 
   Sliders, 
-  AlertTriangle 
+  AlertTriangle,
+  Lock,
+  Trash2,
+  Database
 } from 'lucide-react';
+import { ClearDatabaseModal } from '../common/ClearDatabaseModal';
 
 export const SettingsView: React.FC = () => {
   const { 
@@ -22,12 +26,16 @@ export const SettingsView: React.FC = () => {
     currentUser, 
     setCurrentUser, 
     resetToDefault,
-    auditLogs 
+    auditLogs,
+    orders,
+    units,
+    dbStatus
   } = useStore();
 
   const [horasAlerta, setHorasAlerta] = useState(settings.horas_alerta_atencao);
   const [autoLink, setAutoLink] = useState(settings.auto_vincular_cronograma);
   const [saveFeedback, setSaveFeedback] = useState(false);
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
 
   const handleSaveSettings = () => {
     updateSettings({
@@ -185,27 +193,64 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Section 3: Banco de Dados & Reset */}
-      <div className="bg-white rounded-xl border border-rose-200 p-5 shadow-xs space-y-3 bg-rose-50/10">
-        <div className="flex items-center gap-2 border-b border-rose-100 pb-3">
-          <AlertTriangle className="w-4 h-4 text-rose-600" />
-          <h3 className="text-sm font-bold text-rose-900">
-            Zona de Manutenção & Carga Inicial
-          </h3>
+      {/* Section 3: Banco de Dados, Sincronização & Limpeza com Trava de Segurança */}
+      <div className="bg-white rounded-xl border border-rose-200 p-5 shadow-xs space-y-4 bg-rose-50/10">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-rose-100 pb-3">
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-rose-600" />
+            <h3 className="text-sm font-bold text-rose-900">
+              Zona de Manutenção & Limpeza do Banco de Dados
+            </h3>
+          </div>
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold text-rose-700 bg-rose-100 border border-rose-200 px-2.5 py-1 rounded-full w-fit">
+            <Lock className="w-3 h-3" />
+            Trava de Segurança Ativa
+          </span>
         </div>
 
-        <p className="text-xs text-slate-600">
-          Se desejar retornar o sistema ao estado original com os <strong>631 pedidos de teste</strong>, 45 unidades de Alagoas e cronogramas predefinidos, clique no botão abaixo.
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Gerenciamento e higienização dos registros de pedidos e histórico operacional. Para evitar perda acidental de dados, qualquer exclusão ou limpeza no banco exige a autenticação da <strong>senha de segurança administrativa</strong> configurada no sistema.
         </p>
 
-        <button
-          onClick={handleResetData}
-          className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 rounded-lg transition-colors"
-        >
-          <RotateCcw className="w-4 h-4 text-rose-600" />
-          <span>Restaurar Base Inicial (631 Pedidos)</span>
-        </button>
+        {/* Current Database Statistics */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-white rounded-xl border border-rose-100 text-xs">
+          <div>
+            <span className="text-slate-500 block text-[11px]">Pedidos no Banco:</span>
+            <span className="font-mono font-bold text-slate-900 text-sm">{orders.length} pedidos</span>
+          </div>
+          <div>
+            <span className="text-slate-500 block text-[11px]">Catálogo SESAU:</span>
+            <span className="font-mono font-bold text-slate-900 text-sm">{units.length} unidades</span>
+          </div>
+          <div>
+            <span className="text-slate-500 block text-[11px]">Infraestrutura Ativa:</span>
+            <span className="font-mono font-bold text-blue-700 text-sm uppercase">
+              {dbStatus.supabaseConnected ? 'Supabase Sincronizado' : 'Firestore / Local'}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          <button
+            onClick={() => setIsClearModalOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Limpar Banco de Dados</span>
+            <span className="text-[10px] font-mono font-normal opacity-90 px-1 py-0.2 bg-rose-700/80 rounded">Trava de Segurança</span>
+          </button>
+        </div>
       </div>
+
+      {/* Security-Locked Clear Database Modal */}
+      <ClearDatabaseModal
+        isOpen={isClearModalOpen}
+        onClose={() => setIsClearModalOpen(false)}
+        onSuccess={() => {
+          setSaveFeedback(true);
+          setTimeout(() => setSaveFeedback(false), 4000);
+        }}
+      />
     </div>
   );
 };

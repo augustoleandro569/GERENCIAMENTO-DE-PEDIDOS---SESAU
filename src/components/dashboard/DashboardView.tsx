@@ -596,12 +596,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
             </div>
 
             <div className="space-y-2.5">
-              {priorityAttentionOrders.map((ord) => {
+              {priorityAttentionOrders.map((ord, idx) => {
                 const sch = ord.cronograma_id ? schedulesMap.get(ord.cronograma_id) : null;
                 const { situation, label } = calculateDeadlineSituation(ord, sch, settings.horas_alerta_atencao);
                 return (
                   <div
-                    key={ord.id}
+                    key={`${ord.id}-${idx}`}
                     onClick={() => onSelectOrder(ord)}
                     className="p-3.5 rounded-2xl border border-slate-200 hover:border-blue-400 hover:bg-slate-50 transition-all cursor-pointer group"
                   >

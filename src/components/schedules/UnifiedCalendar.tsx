@@ -34,7 +34,7 @@ import {
 import { DayOrdersModal } from './DayOrdersModal';
 import { MultiSelect } from '../common/MultiSelect';
 
-export type StageDateFilter = 'TODOS' | 'ENTREGA' | 'SEPARACAO' | 'EXPEDICAO' | 'APROVACAO' | 'SOLICITACAO' | 'MARCOS';
+export type StageDateFilter = 'TODOS' | 'ENTREGA' | 'SEPARACAO' | 'EXPEDICAO' | 'APROVACAO' | 'SOLICITACAO';
 
 interface UnifiedCalendarProps {
   onSelectOrder?: (order: Order) => void;
@@ -196,14 +196,13 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
     return list;
   }, [schedules, selectedUnits, selectedOrderTypes]);
 
-  // Unified Day Mapping Structure:
+  // Unified Day Mapping Structure (Exclusively real order operations):
   interface DayMapping {
     entregas: Order[];
     separacoes: Order[];
     expedicoes: Order[];
     aprovacoes: Order[];
     solicitacoes: Order[];
-    marcos: { sch: Schedule; stage: string; color: string }[];
   }
 
   const calendarDayMap = useMemo(() => {
@@ -216,11 +215,10 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
         expedicoes: [],
         aprovacoes: [],
         solicitacoes: [],
-        marcos: [],
       });
     }
 
-    // 1. Map Orders to their respective dates (explicit or schedule-linked)
+    // Map Orders to their respective dates (explicit or schedule-linked)
     filteredOrders.forEach(ord => {
       // Ignora pedidos sem vínculo ativo
       if (ord.cronograma_vinculo === 'NENHUM' || !ord.cronograma_id) {
@@ -264,36 +262,8 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       }
     });
 
-    // 2. Map Schedule Milestones
-    filteredSchedules.forEach(sch => {
-      const dSol = extractDayForMonth(sch.data_limite_solicitacao);
-      if (dSol && map.has(dSol)) {
-        map.get(dSol)!.marcos.push({ sch, stage: 'Limite Solicitação', color: 'bg-blue-100 text-blue-800' });
-      }
-
-      const dAprov = extractDayForMonth(sch.data_limite_aprovacao);
-      if (dAprov && map.has(dAprov)) {
-        map.get(dAprov)!.marcos.push({ sch, stage: 'Limite Aprovação', color: 'bg-amber-100 text-amber-800' });
-      }
-
-      const dSep = extractDayForMonth(sch.data_separacao);
-      if (dSep && map.has(dSep)) {
-        map.get(dSep)!.marcos.push({ sch, stage: 'Separação Prevista', color: 'bg-purple-100 text-purple-800' });
-      }
-
-      const dExp = extractDayForMonth(sch.data_expedicao);
-      if (dExp && map.has(dExp)) {
-        map.get(dExp)!.marcos.push({ sch, stage: 'Expedição Prevista', color: 'bg-cyan-100 text-cyan-800' });
-      }
-
-      const dEnt = extractDayForMonth(sch.data_entrega);
-      if (dEnt && map.has(dEnt)) {
-        map.get(dEnt)!.marcos.push({ sch, stage: 'Entrega Prevista', color: 'bg-emerald-100 text-emerald-800' });
-      }
-    });
-
     return map;
-  }, [filteredOrders, filteredSchedules, schedulesMap, currentMonth, monthStr, totalDaysInMonth]);
+  }, [filteredOrders, schedulesMap, currentMonth, monthStr, totalDaysInMonth]);
 
   // Selected Day Data
   const selectedDayData: DayMapping = selectedDay
@@ -303,7 +273,6 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
         expedicoes: [],
         aprovacoes: [],
         solicitacoes: [],
-        marcos: [],
       })
     : {
         entregas: [],
@@ -311,7 +280,6 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
         expedicoes: [],
         aprovacoes: [],
         solicitacoes: [],
-        marcos: [],
       };
 
   const totalDayOrders = 
@@ -321,7 +289,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
     selectedDayData.aprovacoes.length +
     (selectedStages.includes('SOLICITACAO') ? selectedDayData.solicitacoes.length : 0);
 
-  const totalDayEvents = totalDayOrders + (selectedStages.includes('MARCOS') ? selectedDayData.marcos.length : 0);
+  const totalDayEvents = totalDayOrders;
 
   // Quick reschedule helper for orders on the selected day
   const handleShiftOrderDate = (order: Order, deltaDays: number) => {
@@ -415,7 +383,6 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
               { id: 'EXPEDICAO', label: '🟠 Expedições' },
               { id: 'APROVACAO', label: '🟡 Aprovações' },
               { id: 'SOLICITACAO', label: '🔵 Solicitações' },
-              { id: 'MARCOS', label: '🏁 Marcos de Cronograma' },
             ]}
             selected={selectedStages}
             onChange={(next) => setSelectedStages(next)}
@@ -488,7 +455,6 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                 expedicoes: [],
                 aprovacoes: [],
                 solicitacoes: [],
-                marcos: [],
               };
 
               const isSelected = selectedDay === day;
@@ -499,11 +465,9 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
               const hasExp = data.expedicoes.length > 0 && isStageActive('EXPEDICAO');
               const hasAprov = data.aprovacoes.length > 0 && isStageActive('APROVACAO');
               const hasSol = data.solicitacoes.length > 0 && isStageActive('SOLICITACAO');
-              // Milestones are only shown if the user explicitly filters by 'MARCOS'
-              const hasMarcos = data.marcos.length > 0 && isStageActive('MARCOS');
 
-              // Only actual orders (or explicit MARCOS filter) count for cell active state
-              const hasAny = hasEntregas || hasSep || hasExp || hasAprov || hasSol || hasMarcos;
+              // Only actual orders count for cell active state
+              const hasAny = hasEntregas || hasSep || hasExp || hasAprov || hasSol;
 
               return (
                 <div
@@ -595,14 +559,6 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                       <div className="text-[9px] font-mono px-1.5 py-0.5 rounded-lg bg-blue-50 text-blue-800 border border-blue-200/80 truncate flex items-center gap-1 font-bold shadow-2xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
                         <span>{data.solicitacoes.length} solicitação</span>
-                      </div>
-                    )}
-
-                    {/* Marcos do Cronograma */}
-                    {hasMarcos && (
-                      <div className="text-[9px] font-medium px-1.5 py-0.5 rounded-lg bg-slate-100 text-slate-800 border border-slate-200 truncate flex items-center gap-1 shadow-2xs">
-                        <span className="w-1.5 h-1.5 rounded-full bg-slate-500 shrink-0" />
-                        <span className="truncate">{data.marcos[0].sch.unidade}: {data.marcos[0].stage}</span>
                       </div>
                     )}
                   </div>
@@ -712,9 +668,9 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
 
                   {selectedDayData.entregas.length > 0 ? (
                     <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                      {selectedDayData.entregas.map(ord => (
+                      {selectedDayData.entregas.map((ord, idx) => (
                         <div
-                          key={ord.id}
+                          key={`${ord.id}-${idx}`}
                           className="p-3 bg-emerald-50/40 rounded-2xl border border-emerald-200/70 hover:border-emerald-400 hover:shadow-xs transition-all space-y-2 text-xs"
                         >
                           <div className="flex items-center justify-between">
@@ -803,9 +759,9 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
 
                   {selectedDayData.separacoes.length > 0 ? (
                     <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {selectedDayData.separacoes.map(ord => (
+                      {selectedDayData.separacoes.map((ord, idx) => (
                         <div
-                          key={ord.id}
+                          key={`${ord.id}-${idx}`}
                           className="p-2 bg-purple-50/40 rounded-xl border border-purple-200/70 flex items-center justify-between text-xs hover:bg-purple-100/50 hover:shadow-2xs transition-all"
                         >
                           <div 
@@ -856,9 +812,9 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
 
                   {selectedDayData.expedicoes.length > 0 ? (
                     <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {selectedDayData.expedicoes.map(ord => (
+                      {selectedDayData.expedicoes.map((ord, idx) => (
                         <div
-                          key={ord.id}
+                          key={`${ord.id}-${idx}`}
                           className="p-2 bg-cyan-50/40 rounded-xl border border-cyan-200/70 flex items-center justify-between text-xs hover:bg-cyan-100/50 hover:shadow-2xs transition-all"
                         >
                           <div 
@@ -919,60 +875,15 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                   </div>
                 )}
 
-                {/* Section 5: Marcos Oficiais do Cronograma */}
-                <div className="space-y-2 pt-2 border-t border-slate-100">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-800 border-b border-slate-100 pb-1">
-                    <span className="flex items-center gap-1.5 text-slate-800">
-                      <span className="w-2 h-2 rounded-full bg-slate-500" />
-                      <span>5. Marcos Oficiais ({selectedDayData.marcos.length})</span>
-                    </span>
+                {/* Empty State when no orders are scheduled on this day */}
+                {totalDayOrders === 0 && (
+                  <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80 text-center space-y-1.5 my-2">
+                    <p className="text-xs font-semibold text-slate-700">Nenhum pedido agendado para este dia</p>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      Não há entregas, separações ou expedições programadas nesta data.
+                    </p>
                   </div>
-
-                  {selectedDayData.marcos.length > 0 ? (
-                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {selectedDayData.marcos.map((ev, idx) => {
-                        const unitsList = ev.sch.unidades && ev.sch.unidades.length > 0
-                          ? ev.sch.unidades
-                          : ev.sch.unidade.includes(',')
-                          ? ev.sch.unidade.split(',').map(s => s.trim())
-                          : [ev.sch.unidade];
-
-                        return (
-                          <div key={idx} className="p-2 bg-slate-50 rounded-xl border border-slate-200/80 text-xs space-y-1">
-                            <div className="flex items-center justify-between flex-wrap gap-1">
-                              <div className="flex items-center gap-1 flex-wrap">
-                                {unitsList.map(u => (
-                                  <span key={u} className="font-bold text-blue-900 bg-blue-100/90 px-1.5 py-0.2 rounded-md text-[10px]">
-                                    {u}
-                                  </span>
-                                ))}
-                                <span className="font-mono text-[9px] bg-slate-200/80 text-slate-700 px-1.5 py-0.2 rounded-full font-bold">
-                                  {ev.sch.competencia}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between pt-1">
-                              <p className="text-[11px] text-blue-700 font-bold">{ev.stage}</p>
-                              {onOpenScheduleOrders && (
-                                <button
-                                  type="button"
-                                  onClick={() => onOpenScheduleOrders(ev.sch)}
-                                  className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-100/70 hover:bg-blue-100 px-2 py-0.5 rounded-full transition-colors cursor-pointer"
-                                  title="Auditar prazos, progresso e pedidos deste cronograma"
-                                >
-                                  <TrendingUp className="w-3 h-3 text-blue-600" />
-                                  <span>Auditar SLA</span>
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-[11px] text-slate-400 italic">Nenhum marco cadastrado para este dia.</p>
-                  )}
-                </div>
+                )}
               </>
             ) : (
               <div className="p-8 text-center text-xs text-slate-400 italic">

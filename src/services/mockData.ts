@@ -1,53 +1,9 @@
 import { HospitalUnit, Program, RequestTypeConfig, Schedule, Order, OrderStatus, Priority } from '../types';
 import { parseHistoryToEvents } from '../utils/historyParser';
+import { CANONICAL_UNITS } from '../utils/unitNormalizer';
 
-export const INITIAL_UNITS: HospitalUnit[] = [
-  { id: 'u-1', sigla: 'HGE', nome: 'Hospital Geral do Estado Dr. Osvaldo Brandão Vilela', municipio: 'Maceió', tipo: 'Hospital', ativa: true },
-  { id: 'u-2', sigla: 'HMA', nome: 'Hospital Metropolitano de Alagoas', municipio: 'Maceió', tipo: 'Hospital', ativa: true },
-  { id: 'u-3', sigla: 'HEMOAR', nome: 'Hemocentro Regional de Arapiraca', municipio: 'Arapiraca', tipo: 'Hemocentro', ativa: true },
-  { id: 'u-4', sigla: 'HRM', nome: 'Hospital Regional da Mata', municipio: 'União dos Palmares', tipo: 'Hospital', ativa: true },
-  { id: 'u-5', sigla: 'HRN', nome: 'Hospital Regional do Norte', municipio: 'Porto Calvo', tipo: 'Hospital', ativa: true },
-  { id: 'u-6', sigla: 'HRA', nome: 'Hospital Regional do Alto Sertão', municipio: 'Delmiro Gouveia', tipo: 'Hospital', ativa: true },
-  { id: 'u-7', sigla: 'LACEN', nome: 'Laboratório Central de Saúde Pública de Alagoas', municipio: 'Maceió', tipo: 'Laboratório', ativa: true },
-  { id: 'u-8', sigla: 'HMULHER', nome: 'Hospital da Mulher Dra. Nise da Silveira', municipio: 'Maceió', tipo: 'Hospital', ativa: true },
-  { id: 'u-9', sigla: 'HEMOAL', nome: 'Hemocentro de Alagoas', municipio: 'Maceió', tipo: 'Hemocentro', ativa: true },
-  { id: 'u-10', sigla: 'MESM', nome: 'Maternidade Escola Santa Mônica', municipio: 'Maceió', tipo: 'Maternidade', ativa: true },
-  { id: 'u-11', sigla: 'UPA-TAB', nome: 'UPA Dr. Theobaldo Barbosa - Tabuleiro', municipio: 'Maceió', tipo: 'UPA', ativa: true },
-  { id: 'u-12', sigla: 'UPA-JAC', nome: 'UPA Jacintinho', municipio: 'Maceió', tipo: 'UPA', ativa: true },
-  { id: 'u-13', sigla: 'UPA-JAR', nome: 'UPA Jaraguá', municipio: 'Maceió', tipo: 'UPA', ativa: true },
-  { id: 'u-14', sigla: 'UPA-BEN', nome: 'UPA Benedito Bentes', municipio: 'Maceió', tipo: 'UPA', ativa: true },
-  { id: 'u-15', sigla: 'UPA-CHI', nome: 'UPA Chã da Jaqueira', municipio: 'Maceió', tipo: 'UPA', ativa: true },
-  { id: 'u-16', sigla: 'UPA-ARA', nome: 'UPA Noel Macedo - Arapiraca', municipio: 'Arapiraca', tipo: 'UPA', ativa: true },
-  { id: 'u-17', sigla: 'UPA-DEL', nome: 'UPA Delmiro Gouveia', municipio: 'Delmiro Gouveia', tipo: 'UPA', ativa: true },
-  { id: 'u-18', sigla: 'UPA-COR', nome: 'UPA Coruripe', municipio: 'Coruripe', tipo: 'UPA', ativa: true },
-  { id: 'u-19', sigla: 'UPA-MAR', nome: 'UPA Marechal Deodoro', municipio: 'Marechal Deodoro', tipo: 'UPA', ativa: true },
-  { id: 'u-20', sigla: 'UPA-PAL', nome: 'UPA Palmeira dos Índios', municipio: 'Palmeira dos Índios', tipo: 'UPA', ativa: true },
-  { id: 'u-21', sigla: 'UPA-PEN', nome: 'UPA Penedo', municipio: 'Penedo', tipo: 'UPA', ativa: true },
-  { id: 'u-22', sigla: 'UPA-SAO', nome: 'UPA São Miguel dos Campos', municipio: 'São Miguel dos Campos', tipo: 'UPA', ativa: true },
-  { id: 'u-23', sigla: 'UPA-VIC', nome: 'UPA Viçosa', municipio: 'Viçosa', tipo: 'UPA', ativa: true },
-  { id: 'u-24', sigla: 'SAMU-AL', nome: 'Central de Regulação SAMU 192 Alagoas', municipio: 'Maceió', tipo: 'Outro', ativa: true },
-  { id: 'u-25', sigla: 'H-CRIANCA', nome: 'Hospital da Criança de Alagoas', municipio: 'Maceió', tipo: 'Hospital', ativa: true },
-  { id: 'u-26', sigla: 'H-CORACAO', nome: 'Hospital do Coração Alagoano', municipio: 'Maceió', tipo: 'Hospital', ativa: true },
-  { id: 'u-27', sigla: 'CRA', nome: 'Centro de Reabilitação de Arapiraca', municipio: 'Arapiraca', tipo: 'Ambulatório', ativa: true },
-  { id: 'u-28', sigla: 'CEREST', nome: 'Centro de Referência Estadual em Saúde do Trabalhador', municipio: 'Maceió', tipo: 'Ambulatório', ativa: true },
-  { id: 'u-29', sigla: 'CETA', nome: 'Centro de Triagem e Acolhimento', municipio: 'Maceió', tipo: 'Ambulatório', ativa: true },
-  { id: 'u-30', sigla: 'ALMOX-CENTRAL', nome: 'Almoxarifado Central SESAU', municipio: 'Rio Largo', tipo: 'Outro', ativa: true },
-  { id: 'u-31', sigla: 'FARM-ESP', nome: 'Farmácia de Medicamentos Especializados (CEAF)', municipio: 'Maceió', tipo: 'Ambulatório', ativa: true },
-  { id: 'u-32', sigla: 'SVO', nome: 'Serviço de Verificação de Óbitos de Alagoas', municipio: 'Maceió', tipo: 'Laboratório', ativa: true },
-  { id: 'u-33', sigla: 'H-SANATORIO', nome: 'Hospital Sanatório Unidade de Apoio', municipio: 'Maceió', tipo: 'Hospital', ativa: true },
-  { id: 'u-34', sigla: 'CAPS-INF', nome: 'CAPS Infantil Dr. Zezito Falcão', municipio: 'Maceió', tipo: 'Ambulatório', ativa: true },
-  { id: 'u-35', sigla: 'CAPS-ALCOOL', nome: 'CAPS Álcool e Drogas Dr. Everaldo Miranda', municipio: 'Maceió', tipo: 'Ambulatório', ativa: true },
-  { id: 'u-36', sigla: 'H-SANTANA', nome: 'Hospital Regional Clodolfo Rodrigues', municipio: 'Santana do Ipanema', tipo: 'Hospital', ativa: true },
-  { id: 'u-37', sigla: 'H-PENEDO', nome: 'Hospital Regional de Penedo', municipio: 'Penedo', tipo: 'Hospital', ativa: true },
-  { id: 'u-38', sigla: 'UPA-SANT', nome: 'UPA Santana do Ipanema', municipio: 'Santana do Ipanema', tipo: 'UPA', ativa: true },
-  { id: 'u-39', sigla: 'UPA-BAT', nome: 'UPA Batalha', municipio: 'Batalha', tipo: 'UPA', ativa: true },
-  { id: 'u-40', sigla: 'AMB-HGE', nome: 'Ambulatório de Especialidades do HGE', municipio: 'Maceió', tipo: 'Ambulatório', ativa: true },
-  { id: 'u-41', sigla: 'HEM-ARAP', nome: 'Unidade de Coleta e Transfusão Arapiraca', municipio: 'Arapiraca', tipo: 'Hemocentro', ativa: true },
-  { id: 'u-42', sigla: 'POSTO-MARAG', nome: 'Posto Avançado Litoral Norte', municipio: 'Maragogi', tipo: 'Ambulatório', ativa: true },
-  { id: 'u-43', sigla: 'BASE-PIRAN', nome: 'Base Descentralizada SAMU Piranhas', municipio: 'Piranhas', tipo: 'Outro', ativa: true },
-  { id: 'u-44', sigla: 'UPA-RIO', nome: 'UPA Rio Largo', municipio: 'Rio Largo', tipo: 'UPA', ativa: true },
-  { id: 'u-45', sigla: 'AMB-MAT', nome: 'Ambulatório da Maternidade Santa Mônica', municipio: 'Maceió', tipo: 'Ambulatório', ativa: true }
-];
+export const INITIAL_UNITS: HospitalUnit[] = CANONICAL_UNITS;
+
 
 export const INITIAL_PROGRAMS: Program[] = [
   { id: 'prog-1', nome: 'Hospitalar', descricao: 'Insumos médico-hospitalares, gases, medicamentos e correlatos de internação', ativo: true },

@@ -5,6 +5,7 @@ import { formatDate, formatShortDate, parseDateSafe, calculateDeadlineSituation 
 import { UnifiedCalendar } from './UnifiedCalendar';
 import { DayOrdersModal } from './DayOrdersModal';
 import { ScheduleOrdersModal } from './ScheduleOrdersModal';
+import { ScheduleReportTab } from './ScheduleReportTab';
 import { MultiSelect } from '../common/MultiSelect';
 import { showToast } from '../common/Toast';
 import { 
@@ -32,7 +33,8 @@ import {
   Search,
   Layers,
   CalendarPlus,
-  RotateCcw
+  RotateCcw,
+  FileSpreadsheet
 } from 'lucide-react';
 
 interface ScheduleViewProps {
@@ -42,8 +44,8 @@ interface ScheduleViewProps {
 export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => {
   const { schedules, units, programs, orderTypes, orders, addSchedule, addSchedules, updateSchedule, deleteSchedule, runAutoLinking, currentUser, settings } = useStore();
 
-  // Mode: Calendário | Progresso | Lista
-  const [activeTab, setActiveTab] = useState<'calendario' | 'progresso' | 'lista'>('calendario');
+  // Mode: Calendário | Progresso | Lista | Relatório
+  const [activeTab, setActiveTab] = useState<'calendario' | 'progresso' | 'lista' | 'relatorio'>('calendario');
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -485,6 +487,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
             >
               <List className="w-3.5 h-3.5 text-purple-600" />
               <span>Tabela</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('relatorio')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
+                activeTab === 'relatorio'
+                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-amber-600" />
+              <span>Relatório</span>
             </button>
           </div>
 
@@ -977,6 +991,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
           </div>
         </div>
         </div>
+      )}
+
+      {/* VIEW 4: RELATÓRIO VINCULADO AO CRONOGRAMA */}
+      {activeTab === 'relatorio' && (
+        <ScheduleReportTab onSelectOrder={onSelectOrder} />
       )}
 
       {/* Modal: Novo / Editar Cronograma - Rounded 3xl */}

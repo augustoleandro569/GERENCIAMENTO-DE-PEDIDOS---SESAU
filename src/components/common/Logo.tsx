@@ -70,7 +70,7 @@ export const SesauLogo: React.FC<LogoProps> = ({
           </span>
         </div>
         {showSubtitle && (
-          <span className={`text-slate-500 font-semibold tracking-normal mt-0.5 whitespace-nowrap ${subtitleSize}`}>
+          <span className={`text-slate-500 font-semibold tracking-normal mt-0.5 whitespace-nowrap hidden xl:block ${subtitleSize}`}>
             Abastecimento & Logística Hospitalar
           </span>
         )}

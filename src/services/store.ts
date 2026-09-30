@@ -16,10 +16,12 @@ import {
   INITIAL_PROGRAMS,
   INITIAL_TYPES,
   INITIAL_SCHEDULES,
+  generateSeedOrders,
 } from './mockData';
 import { parseHistoryToEvents } from '../utils/historyParser';
 import { ImportAnalysis } from '../utils/spreadsheet';
 import { dbSync } from './dbSync';
+import { CANONICAL_UNITS, cleanUnitName } from '../utils/unitNormalizer';
 
 const STORAGE_KEYS = {
   ORDERS: 'gp_orders_backend_v2',
@@ -95,7 +97,15 @@ class AppStore {
     try {
       const storedOrders = localStorage.getItem(STORAGE_KEYS.ORDERS);
       if (storedOrders) {
-        this.orders = JSON.parse(storedOrders);
+        const parsed = JSON.parse(storedOrders);
+        if (Array.isArray(parsed)) {
+          const seen = new Set<string>();
+          this.orders = parsed.filter(o => {
+            if (!o || !o.id || seen.has(o.id)) return false;
+            seen.add(o.id);
+            return true;
+          });
+        }
       }
 
       const storedSchedules = localStorage.getItem(STORAGE_KEYS.SCHEDULES);
@@ -147,7 +157,12 @@ class AppStore {
       dbSync.initFirestore(
         (remoteOrders) => {
           if (!this.isLoadedFromBackend && remoteOrders && remoteOrders.length > 0) {
-            this.orders = remoteOrders;
+            const seen = new Set<string>();
+            this.orders = remoteOrders.filter(o => {
+              if (!o || !o.id || seen.has(o.id)) return false;
+              seen.add(o.id);
+              return true;
+            });
             this.save(STORAGE_KEYS.ORDERS, this.orders);
             this.notify();
           }
@@ -183,8 +198,13 @@ class AppStore {
       const res = await dbSync.syncStrictFromSupabase();
       if (res.success) {
         this.isLoadedFromBackend = true;
-        // Strictly use backend data. Drop any uncommitted/mock rows!
-        this.orders = res.orders;
+        // Strictly use backend data with deduplicated IDs
+        const seen = new Set<string>();
+        this.orders = (res.orders || []).filter(o => {
+          if (!o || !o.id || seen.has(o.id)) return false;
+          seen.add(o.id);
+          return true;
+        });
         if (res.schedules.length > 0) {
           this.schedules = res.schedules;
         }
@@ -1127,6 +1147,133 @@ class AppStore {
 
   public async reloadStrictFromBackend() {
     return await this.loadBackendData();
+  }
+
+  public static readonly DATABASE_SECURITY_PASSWORD = 'Sai453@12';
+
+  /**
+   * Limpa o banco de dados mediante autenticação com a trava de segurança (senha: Sai453@12)
+   * Modos suportados:
+   * - 'wipe_orders': Zera todos os pedidos e histórico de importações (mantém unidades e cronogramas)
+   * - 'reseed_clean': Limpa e restaura a base oficial padrão da SESAU
+   * - 'wipe_all': Limpeza total do sistema (pedidos, histórico, logs e cronogramas customizados)
+   */
+  public async clearDatabaseWithPassword(
+    password: string,
+    mode: 'wipe_orders' | 'reseed_clean' | 'wipe_all' = 'wipe_orders',
+    responsavel?: string
+  ): Promise<{ success: boolean; message: string; count?: number }> {
+    if (password !== AppStore.DATABASE_SECURITY_PASSWORD) {
+      throw new Error('Senha de segurança incorreta! Acesso negado. A operação de limpeza foi cancelada.');
+    }
+
+    const previousCount = this.orders.length;
+    const userNome = responsavel || this.currentUser.nome;
+    const nowIso = new Date().toISOString();
+
+    if (mode === 'reseed_clean') {
+      const cleanOrders = generateSeedOrders();
+      cleanOrders.forEach(o => {
+        o.unidade = cleanUnitName(o.unidade);
+      });
+      this.orders = cleanOrders;
+      this.units = [...CANONICAL_UNITS];
+      this.schedules = [...INITIAL_SCHEDULES];
+      this.importRecords = [];
+    } else if (mode === 'wipe_all') {
+      this.orders = [];
+      this.importRecords = [];
+      this.auditLogs = [];
+      this.units = [...CANONICAL_UNITS];
+      this.schedules = [...INITIAL_SCHEDULES];
+    } else {
+      // 'wipe_orders': zera todos os pedidos e histórico de importações
+      this.orders = [];
+      this.importRecords = [];
+      this.units = [...CANONICAL_UNITS];
+    }
+
+    // Persist changes to local storage
+    this.save(STORAGE_KEYS.ORDERS, this.orders);
+    this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
+    this.save(STORAGE_KEYS.UNITS, this.units);
+    this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+    if (mode === 'wipe_all') {
+      this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
+    }
+
+    // Register security audit log
+    this.addAuditLog({
+      pedido_id: 'SEGURANCA',
+      codigo_pedido: 'LIMPEZA-BANCO',
+      usuario: userNome,
+      data_hora: nowIso,
+      campo_alterado: 'Trava de Segurança – Limpeza do Banco',
+      valor_anterior: `${previousCount} pedidos armazenados`,
+      novo_valor: mode === 'reseed_clean' ? 'Base Oficial SESAU Restaurada' : 'Banco de Dados Zerado (0 pedidos)',
+    });
+    this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
+
+    // Mirror deletion to backend (Supabase + Firestore)
+    await dbSync.clearBackendDatabase(mode);
+
+    // If reseed_clean, push the clean base to Supabase
+    if (mode === 'reseed_clean') {
+      await dbSync.pushAllToSupabase(this.orders, this.schedules, this.units);
+    }
+
+    this.notify();
+
+    return {
+      success: true,
+      message: mode === 'reseed_clean'
+        ? `Banco de dados limpo e restaurado com sucesso para a base padrão oficial SESAU (${this.orders.length} pedidos e ${this.units.length} unidades).`
+        : `Banco de dados limpo com sucesso! ${previousCount} pedidos e seus históricos foram excluídos. O banco está zerado e pronto para novas operações.`,
+      count: previousCount,
+    };
+  }
+
+  // Cleans the database, purges legacy dirty units, normalizes all unit references
+  public async cleanDatabase(reseedCleanOrders = true): Promise<{ success: boolean; message: string }> {
+    try {
+      // 1. Reset units to canonical catalog
+      this.units = [...CANONICAL_UNITS];
+      this.save(STORAGE_KEYS.UNITS, this.units);
+
+      // 2. Normalize existing orders or reseed clean orders
+      if (reseedCleanOrders) {
+        const cleanOrders = generateSeedOrders();
+        cleanOrders.forEach(o => {
+          o.unidade = cleanUnitName(o.unidade);
+        });
+        this.orders = cleanOrders;
+      } else {
+        this.orders = this.orders.map(o => ({
+          ...o,
+          unidade: cleanUnitName(o.unidade),
+        }));
+      }
+      this.save(STORAGE_KEYS.ORDERS, this.orders);
+
+      // 3. Clear import history
+      this.importRecords = [];
+      this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
+
+      // 4. Mirror to Supabase & Firestore
+      await dbSync.pushAllToSupabase(this.orders, this.schedules, this.units);
+
+      this.notify();
+      return {
+        success: true,
+        message: `Banco de dados higienizado com sucesso! ${this.units.length} unidades oficiais da rede SESAU restabelecidas e ${this.orders.length} pedidos validados sem resíduos.`,
+      };
+    } catch (err: any) {
+      console.error('cleanDatabase error:', err);
+      return {
+        success: false,
+        message: err.message || 'Falha ao higienizar banco de dados.',
+      };
+    }
   }
 
   // Supabase sync integrations

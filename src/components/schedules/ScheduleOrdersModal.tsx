@@ -421,13 +421,13 @@ export const ScheduleOrdersModal: React.FC<ScheduleOrdersModalProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-normal">
-                    {filteredList.map(({ order, sla }) => {
+                    {filteredList.map(({ order, sla }, idx) => {
                       const isEditingDate = editingDateOrderId === order.id;
                       const initialDateVal = order.data_inicio || order.data_solicitacao || order.criado_em?.split(' ')[0] || '';
 
                       return (
                         <tr 
-                          key={order.id} 
+                          key={`${order.id}-${idx}`} 
                           className="hover:bg-blue-50/40 transition-colors group cursor-pointer"
                           onClick={() => {
                             onClose();

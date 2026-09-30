@@ -203,39 +203,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       allUniqueMap.set(o.id, o);
     });
 
-    // Marcos oficiais de cronograma neste dia
-    const marcos: { sch: Schedule; stage: string; color: string }[] = [];
-    schedules.forEach(sch => {
-      if (effectiveUnits.length > 0) {
-        const schUnits = sch.unidades && sch.unidades.length > 0
-          ? sch.unidades
-          : sch.unidade.includes(',')
-          ? sch.unidade.split(',').map(s => s.trim())
-          : [sch.unidade];
-        const matchesAny = schUnits.some(u => effectiveUnits.includes(u));
-        if (!matchesAny) return;
-      }
-      if (effectiveOrderTypes.length > 0 && !effectiveOrderTypes.includes(sch.tipo_pedido)) {
-        return;
-      }
-
-      if (matchesDay(sch.data_limite_solicitacao)) {
-        marcos.push({ sch, stage: 'Limite para Envio de Solicitações', color: 'bg-blue-100 text-blue-900 border border-blue-300' });
-      }
-      if (matchesDay(sch.data_limite_aprovacao)) {
-        marcos.push({ sch, stage: 'Limite para Validação SESAU', color: 'bg-amber-100 text-amber-900 border border-amber-300' });
-      }
-      if (matchesDay(sch.data_separacao)) {
-        marcos.push({ sch, stage: 'Data Prevista de Separação em Almoxarifado', color: 'bg-purple-100 text-purple-900 border border-purple-300' });
-      }
-      if (matchesDay(sch.data_expedicao)) {
-        marcos.push({ sch, stage: 'Data Prevista de Expedição & Carga', color: 'bg-cyan-100 text-cyan-900 border border-cyan-300' });
-      }
-      if (matchesDay(sch.data_entrega)) {
-        marcos.push({ sch, stage: 'Previsão de Entrega no Hospital', color: 'bg-emerald-100 text-emerald-900 border border-emerald-300' });
-      }
-    });
-
     return {
       todos: Array.from(allUniqueMap.values()),
       entregas,
@@ -243,7 +210,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       expedicoes,
       aprovacoes,
       solicitacoes,
-      marcos,
     };
   }, [orders, schedules, dayNumber, monthStr, effectiveUnits, effectiveOrderTypes, schedulesMap]);
 
@@ -299,7 +265,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       EXPEDICAO: 'Expedições',
       APROVACAO: 'Aprovações',
       SOLICITACAO: 'Solicitações',
-      MARCOS: 'Marcos de Cronograma',
     };
     return effectiveStages.map(s => mapLabels[s] || s).join(', ');
   }, [effectiveStages]);
@@ -325,7 +290,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       entregasCount: dayCategorized.entregas.length,
       separacoesCount: dayCategorized.separacoes.length,
       expedicoesCount: dayCategorized.expedicoes.length,
-      marcosCount: dayCategorized.marcos.length,
     };
   }, [dayCategorized]);
 
@@ -540,13 +504,13 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
 
           <div className="bg-slate-50 p-3 rounded-2xl border border-slate-300 shadow-2xs">
             <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block">
-              Marcos Oficiais
+              Separação & Expedição
             </span>
-            <div className="text-lg font-bold font-mono text-slate-900 mt-0.5">
-              {kpis.marcosCount}
+            <div className="text-lg font-bold font-mono text-purple-950 mt-0.5">
+              {kpis.separacoesCount + kpis.expedicoesCount}
             </div>
             <span className="text-[10px] text-slate-600 font-medium">
-              Limites do ciclo
+              Pedidos em processo
             </span>
           </div>
         </div>
@@ -611,100 +575,18 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
 
         {/* Modal Main Content */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
-          {(effectiveStages.length === 1 && effectiveStages[0] === 'MARCOS') ? (
-            /* VIEW MARCOS */
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
+          {/* VIEW ORDERS TABLE */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                  Marcos Oficiais de Cronograma ({dayCategorized.marcos.length})
+                  {externalStageFilter === 'TODOS' ? 'Todos os Pedidos Ativos Neste Dia' : `Pedidos na Etapa: ${stageFilterLabel}`}
+                </span>
+                <span className="text-[11px] font-mono text-blue-900 bg-blue-100 px-2.5 py-0.5 rounded-full font-bold border border-blue-300">
+                  {displayedOrders.length} resultado(s)
                 </span>
               </div>
-
-              {dayCategorized.marcos.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {dayCategorized.marcos.map((ev, idx) => {
-                    const unitsList = ev.sch.unidades && ev.sch.unidades.length > 0
-                      ? ev.sch.unidades
-                      : ev.sch.unidade.includes(',')
-                      ? ev.sch.unidade.split(',').map(s => s.trim())
-                      : [ev.sch.unidade];
-
-                    return (
-                      <div 
-                        key={idx} 
-                        className="p-4 bg-white rounded-2xl border border-slate-300 shadow-xs space-y-2.5 hover:border-blue-400 transition-all"
-                      >
-                        <div className="flex items-center justify-between flex-wrap gap-1.5">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {unitsList.map(u => (
-                              <span key={u} className="text-xs font-bold text-blue-900 bg-blue-100 px-2 py-0.5 rounded-lg border border-blue-300">
-                                {u}
-                              </span>
-                            ))}
-                            {unitsList.length > 1 && (
-                              <span className="text-[10px] text-slate-600 font-semibold">
-                                ({unitsList.length} unidades vinculadas)
-                              </span>
-                            )}
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-lg bg-slate-100 text-slate-800 font-bold border border-slate-200">
-                              {ev.sch.competencia}
-                            </span>
-                          </div>
-                          <span className="text-[11px] font-bold text-blue-800 bg-blue-50 px-2.5 py-0.5 rounded-lg border border-blue-200">
-                            {ev.sch.programa}
-                          </span>
-                        </div>
-
-                        <div className="pt-1">
-                          <span className="text-xs font-bold text-slate-900 block">
-                            {ev.stage}
-                          </span>
-                          <p className="text-[11px] text-slate-500 mt-0.5">
-                            {ev.sch.nome} · Modalidade: {ev.sch.tipo_pedido}
-                          </p>
-                        </div>
-
-                        <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-600 font-mono flex-wrap gap-1.5">
-                          <span>Limite Sol.: {formatShortDate(ev.sch.data_limite_solicitacao)}</span>
-                          <span className="text-emerald-800 font-bold">Entrega: {formatShortDate(ev.sch.data_entrega)}</span>
-                          {onOpenScheduleOrders && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onClose();
-                                onOpenScheduleOrders(ev.sch);
-                              }}
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-300 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
-                              title="Auditar progresso do cronograma"
-                            >
-                              <Sparkles className="w-3 h-3 text-blue-600" />
-                              <span>Auditar Cronograma</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="p-12 text-center text-xs text-slate-500 italic bg-slate-50 rounded-2xl border border-slate-300">
-                  Nenhum marco oficial de cronograma cadastrado especificamente para o dia {dayNumber}/{monthStr}/2026.
-                </div>
-              )}
             </div>
-          ) : (
-            /* VIEW ORDERS TABLE */
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                    {externalStageFilter === 'TODOS' ? 'Todos os Pedidos Ativos Neste Dia' : `Pedidos na Etapa: ${stageFilterLabel}`}
-                  </span>
-                  <span className="text-[11px] font-mono text-blue-900 bg-blue-100 px-2.5 py-0.5 rounded-full font-bold border border-blue-300">
-                    {displayedOrders.length} resultado(s)
-                  </span>
-                </div>
-              </div>
 
               {displayedOrders.length > 0 ? (
                 <div className="bg-white rounded-2xl border border-slate-300 overflow-hidden shadow-xs">
@@ -735,7 +617,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 font-normal">
-                        {displayedOrders.map(order => {
+                        {displayedOrders.map((order, idx) => {
                           const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
                           const { situation, label } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
 
@@ -749,7 +631,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
 
                           return (
                             <tr 
-                              key={order.id}
+                              key={`${order.id}-${idx}`}
                               className="hover:bg-blue-50/50 transition-colors group cursor-pointer"
                               onClick={() => {
                                 onClose();
@@ -972,7 +854,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                 </div>
               )}
             </div>
-          )}
         </div>
 
         {/* Modal Footer */}

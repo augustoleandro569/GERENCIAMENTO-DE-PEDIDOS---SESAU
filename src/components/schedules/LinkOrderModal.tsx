@@ -176,11 +176,11 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
           {/* List of Orders */}
           <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 max-h-56 overflow-y-auto bg-white shadow-2xs">
             {eligibleOrders.length > 0 ? (
-              eligibleOrders.map((order) => {
+              eligibleOrders.map((order, idx) => {
                 const isSelected = order.id === selectedOrderId;
                 return (
                   <div
-                    key={order.id}
+                    key={`${order.id}-${idx}`}
                     onClick={() => {
                       setSelectedOrderId(order.id);
                       setDataSolicitacao(extractDateOnly(order.data_solicitacao || order.criado_em));
