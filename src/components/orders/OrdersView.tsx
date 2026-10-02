@@ -430,6 +430,17 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
               <Download className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               <span>Exportar Excel</span>
             </button>
+
+            {/* Novo Pedido Action Button */}
+            <button
+              onClick={onOpenNewOrder}
+              disabled={currentUser.role === 'VIEWER'}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 rounded-xl shadow-xs hover:shadow transition-all cursor-pointer whitespace-nowrap border border-blue-700 disabled:opacity-50 disabled:pointer-events-none"
+              title="Registrar Novo Pedido Manual (Falta / Emergencial / Extraordinário)"
+            >
+              <Plus className="w-3.5 h-3.5 shrink-0 stroke-[2.5]" />
+              <span>Novo Pedido</span>
+            </button>
           </div>
         </div>
 

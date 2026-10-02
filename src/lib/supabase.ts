@@ -251,6 +251,33 @@ CREATE TABLE IF NOT EXISTS public.logs_auditoria (
   criado_em TIMESTAMPTZ DEFAULT now()
 );
 
+-- 7. Chaves Estrangeiras (Relacionamentos entre as tabelas no Supabase)
+DO $$ BEGIN
+  -- Conexão: pedidos.importacao_id -> importacoes.id
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_pedidos_importacoes' AND table_name = 'pedidos') THEN
+    UPDATE public.pedidos SET importacao_id = NULL WHERE importacao_id IS NOT NULL AND importacao_id NOT IN (SELECT id FROM public.importacoes);
+    ALTER TABLE public.pedidos ADD CONSTRAINT fk_pedidos_importacoes FOREIGN KEY (importacao_id) REFERENCES public.importacoes(id) ON DELETE SET NULL;
+  END IF;
+
+  -- Conexão: pedidos.cronograma_id -> cronogramas.id
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_pedidos_cronogramas' AND table_name = 'pedidos') THEN
+    UPDATE public.pedidos SET cronograma_id = NULL WHERE cronograma_id IS NOT NULL AND cronograma_id NOT IN (SELECT id FROM public.cronogramas);
+    ALTER TABLE public.pedidos ADD CONSTRAINT fk_pedidos_cronogramas FOREIGN KEY (cronograma_id) REFERENCES public.cronogramas(id) ON DELETE SET NULL;
+  END IF;
+
+  -- Conexão: eventos_pedidos.pedido_id -> pedidos.id
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_eventos_pedidos' AND table_name = 'eventos_pedidos') THEN
+    DELETE FROM public.eventos_pedidos WHERE pedido_id NOT IN (SELECT id FROM public.pedidos);
+    ALTER TABLE public.eventos_pedidos ADD CONSTRAINT fk_eventos_pedidos FOREIGN KEY (pedido_id) REFERENCES public.pedidos(id) ON DELETE CASCADE;
+  END IF;
+
+  -- Conexão: logs_auditoria.pedido_id -> pedidos.id
+  IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_logs_auditoria_pedidos' AND table_name = 'logs_auditoria') THEN
+    UPDATE public.logs_auditoria SET pedido_id = NULL WHERE pedido_id IS NOT NULL AND pedido_id NOT IN (SELECT id FROM public.pedidos);
+    ALTER TABLE public.logs_auditoria ADD CONSTRAINT fk_logs_auditoria_pedidos FOREIGN KEY (pedido_id) REFERENCES public.pedidos(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
 -- Habilitar RLS (Row Level Security) e permitir acesso público/anon
 ALTER TABLE public.pedidos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cronogramas ENABLE ROW LEVEL SECURITY;
@@ -286,4 +313,15 @@ CREATE INDEX IF NOT EXISTS idx_pedidos_status_operacional ON public.pedidos (sta
 CREATE INDEX IF NOT EXISTS idx_pedidos_unidade ON public.pedidos (unidade);
 CREATE INDEX IF NOT EXISTS idx_eventos_pedidos_pedido_id ON public.eventos_pedidos (pedido_id);
 CREATE INDEX IF NOT EXISTS idx_eventos_pedidos_data_evento ON public.eventos_pedidos (data_evento);
+
+-- Ativar Sincronização em Tempo Real (Supabase Realtime)
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.pedidos;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.cronogramas;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 `;

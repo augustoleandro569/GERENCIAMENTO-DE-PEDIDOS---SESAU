@@ -9,6 +9,7 @@ import { ScheduleView } from './components/schedules/ScheduleView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { ImportView } from './components/import/ImportView';
 import { UnitsView } from './components/units/UnitsView';
+import { LoginView } from './components/auth/LoginView';
 import { OrderDetailModal } from './components/orders/OrderDetailModal';
 import { NewOrderModal } from './components/orders/NewOrderModal';
 import { ToastContainer, ToastMessage } from './components/common/Toast';
@@ -28,18 +29,94 @@ import {
   Zap,
   Database,
   RefreshCw,
-  CheckCircle2
+  CheckCircle2,
+  LogIn,
+  LogOut,
+  ShieldCheck,
+  Lock,
+  UserCheck,
+  ChevronDown,
+  User
 } from 'lucide-react';
 
+type ActiveTab = 'login' | 'pedidos' | 'cronograma' | 'unidades' | 'dashboard' | 'importar';
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'pedidos' | 'cronograma' | 'unidades' | 'dashboard' | 'importar'>('pedidos');
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const session = localStorage.getItem('sesau_auth_session');
+      if (session) {
+        const parsed = JSON.parse(session);
+        return parsed?.user === 'Admin569';
+      }
+    } catch (_) {}
+    return false;
+  });
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    try {
+      const session = localStorage.getItem('sesau_auth_session');
+      if (session) {
+        const parsed = JSON.parse(session);
+        if (parsed?.user === 'Admin569') {
+          return 'pedidos';
+        }
+      }
+    } catch (_) {}
+    return 'login';
+  });
+
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isNewOrderOpen, setIsNewOrderOpen] = useState(false);
   const [ordersFilterPreset, setOrdersFilterPreset] = useState<{ status?: string; tipo?: string; unidade?: string } | undefined>(undefined);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
-  const { orders, units, reloadStrictFromBackend, dbStatus, currentUser } = useStore();
+  const { orders, units, reloadStrictFromBackend, dbStatus, currentUser, setCurrentUser } = useStore();
+
+  const handleLoginSuccess = (user: { username: string; role: 'ADMIN' }) => {
+    setIsAuthenticated(true);
+    try {
+      localStorage.setItem('sesau_auth_session', JSON.stringify({
+        user: 'Admin569',
+        timestamp: new Date().toISOString(),
+      }));
+    } catch (_) {}
+
+    setCurrentUser({
+      id: 'usr-admin569',
+      nome: 'Admin569',
+      email: 'admin569@sesau.al.gov.br',
+      cargo: 'Administrador de Abastecimento Hospitalar',
+      role: 'ADMIN',
+      unidade_padrao: 'SESAU Central',
+    });
+
+    setActiveTab('pedidos');
+    addToast('success', 'Acesso Autorizado', 'Bem-vindo ao SIGAH SESAU Alagoas, Admin569!');
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    try {
+      localStorage.removeItem('sesau_auth_session');
+    } catch (_) {}
+    setActiveTab('login');
+    addToast('info', 'Sessão Encerrada', 'Você saiu do sistema com segurança.');
+  };
+
+  const handleTabChange = (tabId: ActiveTab) => {
+    if (!isAuthenticated && tabId !== 'login') {
+      addToast('info', 'Acesso Restrito', 'Efetue login com o usuário Admin569 para acessar esta seção.');
+      setActiveTab('login');
+      return;
+    }
+    setActiveTab(tabId);
+    if (tabId === 'pedidos') {
+      setOrdersFilterPreset(undefined);
+    }
+  };
 
   const handleReloadFromBackend = async () => {
     setIsSyncing(true);
@@ -83,8 +160,6 @@ export default function App() {
     };
   }, []);
 
-  const urgentCount = orders.filter(o => o.tipo === 'Emergencial' && o.status_operacional !== 'Entregue').length;
-
   const handleNavigateFromDashboard = (preset?: { status?: string; tipo?: string; unidade?: string }) => {
     setOrdersFilterPreset(preset);
     setActiveTab('pedidos');
@@ -99,106 +174,190 @@ export default function App() {
           <SesauLogo 
             size="md"
             onClick={() => {
-              setActiveTab('pedidos');
-              setOrdersFilterPreset(undefined);
+              handleTabChange(isAuthenticated ? 'pedidos' : 'login');
             }}
           />
 
-          {/* Clean Sharp Tab Navigation (Desktop) */}
-          <nav className="hidden lg:flex items-center bg-slate-100/90 p-1 rounded-xl border border-slate-200 shadow-2xs shrink-0">
-            {[
-              { id: 'pedidos', label: 'Pedidos', icon: ClipboardList, badge: orders.length },
-              { id: 'cronograma', label: 'Cronograma', icon: Calendar, badge: null },
-              { id: 'unidades', label: 'Unidades', icon: Building2, badge: units.length },
-              { id: 'dashboard', label: 'Painel Geral', icon: BarChart3, badge: null },
-              { id: 'importar', label: 'Importar Planilha', icon: Upload, badge: null },
-            ].map(tab => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => {
-                    setActiveTab(tab.id as typeof activeTab);
-                    if (tab.id === 'pedidos') setOrdersFilterPreset(undefined);
-                  }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    isActive
-                      ? 'bg-white text-blue-900 border border-slate-200/80 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
-                  }`}
-                >
-                  <Icon className={`w-3.5 h-3.5 shrink-0 transition-colors ${isActive ? 'text-blue-600' : 'text-slate-500'}`} />
-                  <span>{tab.label}</span>
-                  {tab.badge !== null && (
-                    <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${isActive ? 'bg-blue-100 text-blue-800' : 'text-slate-700 bg-slate-200'}`}>
-                      {tab.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+          {/* Clean Sharp Tab Navigation (Desktop) - Hidden on login view */}
+          {isAuthenticated && activeTab !== 'login' && (
+            <nav className="hidden lg:flex items-center justify-center bg-slate-100/90 p-1 rounded-xl border border-slate-200 shadow-2xs shrink-0 mx-auto">
+              {[
+                { id: 'pedidos' as const, label: 'Pedidos', icon: ClipboardList, badge: orders.length },
+                { id: 'cronograma' as const, label: 'Cronograma', icon: Calendar, badge: null },
+                { id: 'unidades' as const, label: 'Unidades', icon: Building2, badge: units.length },
+                { id: 'dashboard' as const, label: 'Painel Geral', icon: BarChart3, badge: null },
+                { id: 'importar' as const, label: 'Importar Planilha', icon: Upload, badge: null },
+              ].map(tab => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => handleTabChange(tab.id)}
+                    className={`inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap text-center ${
+                      isActive
+                        ? 'bg-white text-blue-900 border border-slate-200/80 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
+                    }`}
+                  >
+                    <Icon className={`w-3.5 h-3.5 shrink-0 transition-colors ${isActive ? 'text-blue-600' : 'text-slate-500'}`} />
+                    <span>{tab.label}</span>
+                    {tab.badge !== null && (
+                      <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${isActive ? 'bg-blue-100 text-blue-800' : 'text-slate-700 bg-slate-200'}`}>
+                        {tab.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          )}
 
           {/* Actions & Primary CTA */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            {urgentCount > 0 && (
-              <button
-                onClick={() => {
-                  setOrdersFilterPreset({ tipo: 'Emergencial' });
-                  setActiveTab('pedidos');
-                }}
-                className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-800 text-xs font-bold hover:bg-rose-100 transition-all hover:-translate-y-0.5 active:scale-95 shadow-2xs cursor-pointer whitespace-nowrap shrink-0"
-                title="Ver pedidos emergenciais ativos"
-              >
-                <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping shrink-0" />
-                <span>{urgentCount} Urgentes</span>
-              </button>
+          <div className="flex items-center justify-end gap-2 sm:gap-2.5 shrink-0">
+            {(!isAuthenticated || activeTab === 'login') ? (
+              <div className="flex items-center gap-2">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-semibold">
+                  <Lock className="w-3 h-3 text-amber-600" />
+                  <span>Acesso Restrito</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setActiveTab('login');
+                    const userInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+                    userInput?.focus();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer whitespace-nowrap"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Entrar</span>
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* ÚNICO BOTÃO CENTRALIZADO: Sessão, Perfil e Sair */}
+                <div className="relative">
+                  <button 
+                    onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                    className="inline-flex items-center justify-center gap-2 h-9 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-98 border border-slate-200/90 text-xs cursor-pointer transition-all shadow-2xs shrink-0 select-none text-center"
+                    title="Sessão Admin569 · Clique para gerenciar sessão ou sair"
+                  >
+                    <div className="w-5 h-5 rounded-md bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="font-bold text-slate-900 font-mono text-xs leading-none">Admin569</span>
+                    <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300/80 px-1.5 py-0.5 rounded-full leading-none inline-flex items-center gap-1 shrink-0">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                      ADMIN
+                    </span>
+                    <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-150 ${isUserMenuOpen ? 'rotate-180 text-blue-600' : ''}`} />
+                  </button>
+
+                  {/* Dropdown Menu com Sessão e Sair */}
+                  {isUserMenuOpen && (
+                    <>
+                      <div 
+                        className="fixed inset-0 z-40" 
+                        onClick={() => setIsUserMenuOpen(false)} 
+                      />
+                      <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="px-4 py-2.5 border-b border-slate-100">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0">
+                              <ShieldCheck className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-slate-900 text-xs font-mono">Admin569</span>
+                                <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded-full">ADMIN</span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 truncate mt-0.5">Sessão Administrativa SESAU</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-1 space-y-0.5">
+                          <button
+                            onClick={() => {
+                              setActiveTab('login');
+                              setIsUserMenuOpen(false);
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-950 rounded-lg transition-colors cursor-pointer text-left"
+                          >
+                            <User className="w-4 h-4 text-blue-600 shrink-0" />
+                            <span>Ver Dados da Sessão</span>
+                          </button>
+
+                          <div className="h-px bg-slate-100 my-1" />
+
+                          <button
+                            onClick={() => {
+                              setIsUserMenuOpen(false);
+                              handleLogout();
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer text-left"
+                          >
+                            <LogOut className="w-4 h-4 text-rose-500 shrink-0" />
+                            <span>Sair (Encerrar Sessão)</span>
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
             )}
-
-            {/* Subtle Divider */}
-            <div className="h-6 w-px bg-slate-200 hidden sm:block shrink-0" />
-
-            {/* Primary Action Button: Novo Pedido */}
-            <button
-              onClick={() => setIsNewOrderOpen(true)}
-              disabled={currentUser.role === 'VIEWER'}
-              className="inline-flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 rounded-xl shadow-xs hover:shadow transition-all cursor-pointer whitespace-nowrap shrink-0 border border-blue-700 disabled:opacity-50 disabled:pointer-events-none"
-              title="Registrar Novo Pedido Manual (Falta / Emergencial / Extraordinário)"
-            >
-              <Plus className="w-3.5 h-3.5 shrink-0 stroke-[2.5]" />
-              <span>Novo Pedido</span>
-            </button>
           </div>
         </div>
 
-        {/* Mobile / Tablet Submenu - Clean Strip */}
-        <div className="flex lg:hidden border-t border-slate-100 bg-slate-50/90 px-4 py-2 gap-1.5 overflow-x-auto text-xs">
-          {[
-            { id: 'pedidos', label: `Pedidos (${orders.length})` },
-            { id: 'cronograma', label: 'Cronograma' },
-            { id: 'unidades', label: `Unidades (${units.length})` },
-            { id: 'dashboard', label: 'Painel Geral' },
-            { id: 'importar', label: 'Importar' },
-          ].map((item) => (
+        {/* Mobile / Tablet Submenu - Hidden on login view */}
+        {isAuthenticated && activeTab !== 'login' && (
+          <div className="flex lg:hidden border-t border-slate-100 bg-slate-50/90 px-4 py-2 gap-1.5 overflow-x-auto text-xs items-center">
+            {[
+              { id: 'pedidos' as const, label: `Pedidos (${orders.length})` },
+              { id: 'cronograma' as const, label: 'Cronograma' },
+              { id: 'unidades' as const, label: `Unidades (${units.length})` },
+              { id: 'dashboard' as const, label: 'Painel Geral' },
+              { id: 'importar' as const, label: 'Importar' },
+            ].map((item) => (
+              <button
+                key={item.id}
+                onClick={() => handleTabChange(item.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
+                  activeTab === item.id 
+                    ? 'bg-blue-600 text-white shadow-xs' 
+                    : 'text-slate-700 hover:bg-slate-200/70'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+
             <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id as typeof activeTab)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
-                activeTab === item.id 
-                  ? 'bg-blue-600 text-white shadow-xs' 
-                  : 'text-slate-700 hover:bg-slate-200/70'
-              }`}
+              onClick={handleLogout}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap text-rose-600 hover:bg-rose-50 flex items-center gap-1.5 ml-auto shrink-0"
+              title="Encerrar sessão"
             >
-              {item.label}
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Sair</span>
             </button>
-          ))}
-        </div>
+          </div>
+        )}
       </header>
 
       {/* Main Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5">
-        {activeTab === 'pedidos' && (
+        {activeTab === 'login' && (
+          <LoginView
+            isAuthenticated={isAuthenticated}
+            currentUser={currentUser}
+            onLoginSuccess={handleLoginSuccess}
+            onLogout={handleLogout}
+            onNavigateToOrders={() => setActiveTab('pedidos')}
+          />
+        )}
+
+        {isAuthenticated && activeTab === 'pedidos' && (
           <OrdersView
             onSelectOrder={(ord) => setSelectedOrder(ord)}
             onOpenNewOrder={() => setIsNewOrderOpen(true)}
@@ -207,22 +366,22 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'cronograma' && (
+        {isAuthenticated && activeTab === 'cronograma' && (
           <ScheduleView onSelectOrder={(ord) => setSelectedOrder(ord)} />
         )}
 
-        {activeTab === 'unidades' && (
+        {isAuthenticated && activeTab === 'unidades' && (
           <UnitsView />
         )}
 
-        {activeTab === 'dashboard' && (
+        {isAuthenticated && activeTab === 'dashboard' && (
           <DashboardView
             onSelectOrder={(ord) => setSelectedOrder(ord)}
             onNavigateToOrders={handleNavigateFromDashboard}
           />
         )}
 
-        {activeTab === 'importar' && (
+        {isAuthenticated && activeTab === 'importar' && (
           <ImportView />
         )}
       </main>
@@ -230,7 +389,7 @@ export default function App() {
       {/* Slender Footer */}
       <footer className="border-t border-slate-200/60 bg-white py-3 px-6 text-xs text-slate-400">
         <div className="max-w-6xl mx-auto flex items-center justify-between text-[11px]">
-          <span>SESAU Alagoas · Secretaria de Estado da Saúde · Gestão Integrada de Abastecimento</span>
+          <span>Linus Soluções · SESAU Alagoas · Gestão Integrada de Abastecimento Hospitalar</span>
           <button
             onClick={handleReloadFromBackend}
             disabled={isSyncing}

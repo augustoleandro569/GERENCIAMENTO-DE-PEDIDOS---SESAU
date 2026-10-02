@@ -1,17 +1,13 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { initializeFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, setLogLevel, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-// CRITICAL: Must pass firebaseConfig.firestoreDatabaseId as the third parameter to initializeFirestore
-export const db = initializeFirestore(
-  app,
-  {
-    experimentalAutoDetectLongPolling: true,
-  },
-  firebaseConfig.firestoreDatabaseId
-);
+// Suppress internal retry log noise from Firebase SDK during initial offline/connecting handshake
+setLogLevel('silent');
+// CRITICAL: Must pass firebaseConfig.firestoreDatabaseId as the second parameter to getFirestore
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleAuthProvider = new GoogleAuthProvider();
 
@@ -100,14 +96,15 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 // Connection test on boot as required by system guidelines
 export async function testFirestoreConnection(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return false;
+  }
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
     return true;
   } catch (error: any) {
-    const msg = error?.message || String(error);
-    if (msg.includes('client is offline') || msg.includes('unavailable') || msg.includes('quota') || msg.includes('Quota') || error?.code === 'unavailable') {
-      console.warn('Firestore operating in offline / quota limit mode.');
-      return false;
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.warn('Firestore offline notice: client is operating in cached mode.');
     }
     return false;
   }
@@ -117,5 +114,5 @@ export async function testFirestoreConnection(): Promise<boolean> {
 if (typeof window !== 'undefined') {
   setTimeout(() => {
     testFirestoreConnection().catch(() => {});
-  }, 1000);
+  }, 3000);
 }
