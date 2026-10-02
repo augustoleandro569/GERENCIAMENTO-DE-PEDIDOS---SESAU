@@ -158,10 +158,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
       if (o.tipo === 'Emergencial') emergenciais++;
 
       switch (o.status_operacional) {
+        case 'Aguardando Validação':
         case 'Aguardando Aprovação':
         case 'Rascunho':
           aguardandoAprovacao++;
           break;
+        case 'Aprovado':
         case 'Aprovada':
           aprovados++;
           break;
@@ -192,6 +194,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
         case 'Rejeitada':
           rejeitados++;
           break;
+        case 'Cancelado':
         case 'Cancelada':
           cancelados++;
           break;

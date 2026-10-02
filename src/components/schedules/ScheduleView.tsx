@@ -157,7 +157,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
       const delivered = linkedOrders.filter(o => o.status_operacional === 'Entregue' || o.status_operacional === 'Entregue Parcialmente').length;
       const inTransport = linkedOrders.filter(o => o.status_operacional === 'Em Transporte').length;
       const inSeparation = linkedOrders.filter(o => o.status_operacional === 'Em Separação' || o.status_operacional === 'Aguardando Conferência' || o.status_operacional === 'Expedida').length;
-      const awaiting = linkedOrders.filter(o => o.status_operacional === 'Aguardando Aprovação' || o.status_operacional === 'Rascunho' || o.status_operacional === 'Aprovada').length;
+      const awaiting = linkedOrders.filter(o => o.status_operacional === 'Aguardando Aprovação' || o.status_operacional === 'Aguardando Validação' || o.status_operacional === 'Rascunho' || o.status_operacional === 'Aprovada' || o.status_operacional === 'Aprovado').length;
 
       // Calculate SLA: No Prazo, Atenção, Fora do Prazo
       let noPrazo = 0;

@@ -89,7 +89,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     let atrasado = 0;
 
     orders.forEach(o => {
-      if (o.status_operacional === 'Aguardando Aprovação' || o.status_operacional === 'Rascunho') aguardando++;
+      if (o.status_operacional === 'Aguardando Aprovação' || o.status_operacional === 'Aguardando Validação' || o.status_operacional === 'Rascunho') aguardando++;
       if (o.status_operacional === 'Em Separação' || o.status_operacional === 'Aguardando Separação') separacao++;
       if (o.status_operacional === 'Em Transporte' || o.status_operacional === 'Expedida') transporte++;
       if (o.status_operacional === 'Entregue' || o.status_operacional === 'Entregue Parcialmente') entregue++;
@@ -130,7 +130,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           if (qf === 'ATRASADO') return situation === 'Atrasado';
 
           if (viewMode !== 'kanban') {
-            if (qf === 'AGUARDANDO') return order.status_operacional === 'Aguardando Aprovação' || order.status_operacional === 'Rascunho';
+            if (qf === 'AGUARDANDO') return order.status_operacional === 'Aguardando Aprovação' || order.status_operacional === 'Aguardando Validação' || order.status_operacional === 'Rascunho';
             if (qf === 'SEPARACAO') return order.status_operacional === 'Em Separação' || order.status_operacional === 'Aguardando Separação';
             if (qf === 'TRANSPORTE') return order.status_operacional === 'Em Transporte' || order.status_operacional === 'Expedida';
             if (qf === 'ENTREGUE') return order.status_operacional === 'Entregue' || order.status_operacional === 'Entregue Parcialmente';
@@ -260,8 +260,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const kanbanPipeline: KanbanColumnConfig[] = [
     {
       id: 'col-aguardando',
-      title: 'Aguardando Aprovação',
-      statuses: ['Aguardando Aprovação', 'Rascunho'],
+      title: 'Aguardando Aprovação / Validação',
+      statuses: ['Aguardando Aprovação', 'Aguardando Validação', 'Rascunho'],
       advanceTo: 'Aguardando Separação',
       headerBorder: 'border-amber-300',
       badgeBg: 'bg-amber-100 border-amber-300',
@@ -271,7 +271,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     {
       id: 'col-aprovada',
       title: 'Aguardando Separação',
-      statuses: ['Aguardando Separação', 'Aprovada'],
+      statuses: ['Aguardando Separação', 'Aprovada', 'Aprovado'],
       advanceTo: 'Em Separação',
       retroactTo: 'Aguardando Aprovação',
       headerBorder: 'border-purple-300',
@@ -347,7 +347,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     {
       id: 'col-cancelada',
       title: 'Cancelada / Rejeitada',
-      statuses: ['Rejeitada', 'Cancelada'],
+      statuses: ['Rejeitada', 'Cancelada', 'Cancelado'],
       retroactTo: 'Aguardando Aprovação',
       headerBorder: 'border-rose-300',
       badgeBg: 'bg-rose-100 border-rose-300',

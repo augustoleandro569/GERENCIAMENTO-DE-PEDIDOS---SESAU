@@ -19,8 +19,10 @@ export function getStatusStyle(status: OrderStatus) {
   switch (status) {
     case 'Rascunho':
       return { dot: 'bg-slate-400', text: 'text-slate-600', bg: 'bg-slate-50', border: 'border-slate-200/80' };
+    case 'Aguardando Validação':
     case 'Aguardando Aprovação':
       return { dot: 'bg-amber-500', text: 'text-amber-800', bg: 'bg-amber-50/70', border: 'border-amber-200/70' };
+    case 'Aprovado':
     case 'Aprovada':
       return { dot: 'bg-blue-600', text: 'text-blue-800', bg: 'bg-blue-50/70', border: 'border-blue-200/70' };
     case 'Aguardando Separação':
@@ -41,6 +43,7 @@ export function getStatusStyle(status: OrderStatus) {
       return { dot: 'bg-lime-600', text: 'text-lime-800', bg: 'bg-lime-50/70', border: 'border-lime-200/70' };
     case 'Rejeitada':
       return { dot: 'bg-rose-600', text: 'text-rose-800', bg: 'bg-rose-50/70', border: 'border-rose-200/70' };
+    case 'Cancelado':
     case 'Cancelada':
       return { dot: 'bg-neutral-400', text: 'text-neutral-600', bg: 'bg-neutral-50', border: 'border-neutral-200' };
     default:
@@ -52,8 +55,10 @@ export function getStatusIcon(status: OrderStatus) {
   switch (status) {
     case 'Rascunho':
       return <FileEdit className="w-3 h-3 shrink-0" />;
+    case 'Aguardando Validação':
     case 'Aguardando Aprovação':
       return <Clock className="w-3 h-3 shrink-0" />;
+    case 'Aprovado':
     case 'Aprovada':
       return <ClipboardCheck className="w-3 h-3 shrink-0" />;
     case 'Em Separação':
@@ -66,6 +71,7 @@ export function getStatusIcon(status: OrderStatus) {
     case 'Entregue Parcialmente':
       return <PackageCheck className="w-3 h-3 shrink-0" />;
     case 'Rejeitada':
+    case 'Cancelado':
     case 'Cancelada':
       return <XCircle className="w-3 h-3 shrink-0" />;
     default:
@@ -90,7 +96,9 @@ export const StatusBadge: React.FC<{ status: OrderStatus; size?: 'sm' | 'md' }> 
 
 export const ALL_STATUSES: OrderStatus[] = [
   'Rascunho',
+  'Aguardando Validação',
   'Aguardando Aprovação',
+  'Aprovado',
   'Aprovada',
   'Aguardando Separação',
   'Em Separação',
@@ -100,8 +108,9 @@ export const ALL_STATUSES: OrderStatus[] = [
   'Em Transporte',
   'Entregue',
   'Entregue Parcialmente',
-  'Rejeitada',
+  'Cancelado',
   'Cancelada',
+  'Rejeitada',
 ];
 
 /**

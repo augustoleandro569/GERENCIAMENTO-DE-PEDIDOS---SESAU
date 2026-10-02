@@ -110,8 +110,8 @@ export function calculateDeadlineSituation(
   }
 
   // Active stages check
-  const isAwaitingApproval = order.status_operacional === 'Aguardando Aprovação' || order.status_origem === 'Aguardando Aprovação' || order.status_operacional === 'Rascunho';
-  const isApprovedOrSeparating = order.status_operacional === 'Aprovada' || order.status_operacional === 'Aguardando Separação' || order.status_operacional === 'Em Separação';
+  const isAwaitingApproval = order.status_operacional === 'Aguardando Aprovação' || order.status_operacional === 'Aguardando Validação' || order.status_origem === 'Aguardando Aprovação' || order.status_origem === 'Aguardando Validação' || order.status_operacional === 'Rascunho';
+  const isApprovedOrSeparating = order.status_operacional === 'Aprovada' || order.status_operacional === 'Aprovado' || order.status_operacional === 'Aguardando Separação' || order.status_operacional === 'Em Separação';
   const isInConferenceOrDispatch = order.status_operacional === 'Aguardando Conferência' || order.status_operacional === 'Em Conferência' || order.status_operacional === 'Expedida';
   const isInTransport = order.status_operacional === 'Em Transporte';
 

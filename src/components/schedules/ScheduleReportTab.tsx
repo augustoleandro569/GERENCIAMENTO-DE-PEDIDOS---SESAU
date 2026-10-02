@@ -49,6 +49,15 @@ interface StatusMeta {
 
 const STATUS_TAXONOMY: StatusMeta[] = [
   {
+    key: 'AGUARDANDO_APROVACAO',
+    label: 'Aguardando Validação / Aprovação',
+    color: '#D97706',
+    bgBadge: 'bg-amber-50 border-amber-200 text-amber-900',
+    textColor: 'text-amber-700',
+    dotColor: 'bg-amber-500',
+    matches: (s) => s === 'Aguardando Aprovação' || s === 'Aguardando Validação' || s === 'Aguardando validacao' || s === 'Aguardando aprovacao' || s === 'Rascunho',
+  },
+  {
     key: 'APROVADA',
     label: 'Aprovada',
     color: '#10B981',

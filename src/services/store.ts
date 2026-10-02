@@ -733,20 +733,21 @@ class AppStore {
 
         this.orders.unshift(newOrder);
         affectedOrders.push(newOrder);
-      } else if (item.action === 'ATUALIZAR') {
+      } else if (item.action === 'ATUALIZAR' || item.action === 'SEM_ALTERACAO') {
         const current = this.orders.find(o => o.codigo === row.codigo);
         if (!current) continue;
 
         let hasChanged = false;
 
-        if (current.status_origem !== row.status) {
+        // Status update: strictly maintain the status from the spreadsheet
+        if (row.status && (current.status_origem !== row.status || current.status_operacional !== row.status)) {
           const audit = this.addAuditLog({
             pedido_id: current.id,
             codigo_pedido: current.codigo,
             usuario: `Importação (${userNome})`,
             data_hora: now,
             campo_alterado: 'Status via Planilha',
-            valor_anterior: current.status_origem,
+            valor_anterior: `${current.status_operacional} (${current.status_origem})`,
             novo_valor: row.status,
           });
           newAuditLogs.push(audit);
@@ -756,11 +757,70 @@ class AppStore {
           hasChanged = true;
         }
 
-        if (current.quantidade_itens !== row.itens) {
+        // Quantidade de itens
+        if (row.itens && current.quantidade_itens !== row.itens) {
           current.quantidade_itens = row.itens;
           hasChanged = true;
         }
 
+        // Unidade / Hospital
+        if (row.unidade && current.unidade !== row.unidade) {
+          current.unidade = row.unidade;
+          hasChanged = true;
+        }
+
+        // Tipo de pedido
+        if (row.tipo && current.tipo !== row.tipo) {
+          current.tipo = row.tipo;
+          hasChanged = true;
+        }
+
+        // Solicitante
+        if (row.solicitante && current.solicitante !== row.solicitante) {
+          current.solicitante = row.solicitante;
+          hasChanged = true;
+        }
+
+        // CPF
+        if (row.cpf && row.cpf !== '—' && current.cpf !== row.cpf) {
+          current.cpf = row.cpf;
+          hasChanged = true;
+        }
+
+        // Programa
+        if (row.programa && current.programa !== row.programa) {
+          current.programa = row.programa;
+          hasChanged = true;
+        }
+
+        // Datas operacionais da planilha
+        if (row.data_solicitacao && current.data_solicitacao !== row.data_solicitacao) {
+          current.data_solicitacao = row.data_solicitacao;
+          current.data_inicio = row.data_solicitacao;
+          hasChanged = true;
+        }
+
+        if (row.data_aprovacao && current.data_aprovacao !== row.data_aprovacao) {
+          current.data_aprovacao = row.data_aprovacao;
+          hasChanged = true;
+        }
+
+        if (row.data_inicio_separacao && current.data_inicio_separacao !== row.data_inicio_separacao) {
+          current.data_inicio_separacao = row.data_inicio_separacao;
+          hasChanged = true;
+        }
+
+        if (row.data_expedicao && current.data_expedicao !== row.data_expedicao) {
+          current.data_expedicao = row.data_expedicao;
+          hasChanged = true;
+        }
+
+        if (row.data_prevista_entrega && current.data_prevista_entrega !== row.data_prevista_entrega) {
+          current.data_prevista_entrega = row.data_prevista_entrega;
+          hasChanged = true;
+        }
+
+        // Operadores e timestamps
         if (row.validador && current.validador !== row.validador) {
           current.validador = row.validador;
           current.validada_em = row.validada_em || current.validada_em;
@@ -779,6 +839,7 @@ class AppStore {
           hasChanged = true;
         }
 
+        // Histórico de eventos
         if (row.historico && row.historico !== current.historico_original) {
           current.historico_original = row.historico;
           const newParsedEvents = parseHistoryToEvents(current.id, row.historico, row.solicitante);
@@ -786,16 +847,17 @@ class AppStore {
           hasChanged = true;
         }
 
+        current.importacao_id = importId;
+        current.atualizado_em = now;
+
         if (hasChanged) {
-          current.atualizado_em = now;
-          current.importacao_id = importId;
           updateCount++;
           affectedOrders.push(current);
         } else {
           unchangedCount++;
+          // Still ensure database has current state
+          affectedOrders.push(current);
         }
-      } else if (item.action === 'SEM_ALTERACAO') {
-        unchangedCount++;
       }
     }
 

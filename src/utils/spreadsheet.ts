@@ -111,91 +111,104 @@ function parseQuantitySafe(val: unknown): number {
 
 /**
  * Normalizes any free-form status string from Portuguese hospital spreadsheets
- * and ERPs (MV, AGHUse, Vivace, SIAS, SIGEP, Planilhas SESAU) into the official 12 OrderStatus.
+ * and ERPs (MV, AGHUse, Vivace, SIAS, SIGEP, Planilhas SESAU) into the official OrderStatus.
+ * Preserves exact statuses: RASCUNHO, AGUARDANDO VALIDAÇÃO, APROVADO, AGUARDANDO SEPARAÇÃO,
+ * EM SEPARAÇÃO, AGUARDANDO CONFERENCIA, EM CONFERENCIA, EXPEDIDA, EM TRANSPORTE,
+ * ENTREGUE, ENTREGUE PARCIALMENTE, CANCELADO.
  */
 export function normalizeOrderStatus(val: unknown): OrderStatus {
-  if (val === null || val === undefined) return 'Aguardando Aprovação';
+  if (val === null || val === undefined) return 'Aguardando Validação';
   const str = String(val).trim();
-  if (!str) return 'Aguardando Aprovação';
+  if (!str) return 'Aguardando Validação';
 
-  const lower = str.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  const clean = str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+  const lower = clean.toLowerCase();
 
-  // 1. Rejection / Cancellation
-  if (lower.includes('cancelad') || lower.includes('anulad')) return 'Cancelada';
+  // 1. Direct EXACT matches for all standard hospital workflow statuses
+  if (clean === 'RASCUNHO') return 'Rascunho';
+  if (clean === 'AGUARDANDO VALIDACAO' || clean === 'AGUARDANDO A VALIDACAO' || clean === 'EM VALIDACAO' || clean === 'VALIDACAO') return 'Aguardando Validação';
+  if (clean === 'AGUARDANDO APROVACAO' || clean === 'AGUARDANDO A APROVACAO' || clean === 'EM APROVACAO') return 'Aguardando Aprovação';
+  if (clean === 'APROVADO') return 'Aprovado';
+  if (clean === 'APROVADA') return 'Aprovada';
+  if (clean === 'AGUARDANDO SEPARACAO' || clean === 'AGUARDANDO A SEPARACAO') return 'Aguardando Separação';
+  if (clean === 'EM SEPARACAO' || clean === 'SEPARANDO') return 'Em Separação';
+  if (clean === 'AGUARDANDO CONFERENCIA' || clean === 'AGUARDANDO A CONFERENCIA') return 'Aguardando Conferência';
+  if (clean === 'EM CONFERENCIA' || clean === 'CONFERINDO') return 'Em Conferência';
+  if (clean === 'EXPEDIDA' || clean === 'EXPEDIDO') return 'Expedida';
+  if (clean === 'EM TRANSPORTE' || clean === 'TRANSPORTE' || clean === 'EM TRANSITO' || clean === 'TRANSITO') return 'Em Transporte';
+  if (clean === 'ENTREGUE PARCIALMENTE' || clean === 'ENTREGA PARCIAL' || clean === 'PARCIALMENTE ENTREGUE' || clean === 'PARCIAL') return 'Entregue Parcialmente';
+  if (clean === 'ENTREGUE' || clean === 'ENTREGADO' || clean === 'ENTREGADA') return 'Entregue';
+  if (clean === 'CANCELADO') return 'Cancelado';
+  if (clean === 'CANCELADA') return 'Cancelada';
+  if (clean === 'REJEITADA' || clean === 'REJEITADO') return 'Rejeitada';
+
+  // 2. Cancellation / Rejection
+  if (lower.includes('cancelad') || lower.includes('anulad')) return 'Cancelado';
   if (lower.includes('rejeitad') || lower.includes('reprovad') || lower.includes('glosad') || lower.includes('recusad')) return 'Rejeitada';
 
-  // 2. Partial Delivery (Must be tested before full delivery!)
-  if (lower.includes('entregue parcial') || lower.includes('entrega parcial') || 
-      lower.includes('parcialmente') || lower.includes('atendido parcial') || 
-      lower.includes('atendimento parcial') || lower === 'parcial') {
-    return 'Entregue Parcialmente';
-  }
+  // 3. Partial Delivery (Must be tested before full delivery)
+  if (lower.includes('parcial')) return 'Entregue Parcialmente';
 
-  // 3. Full Delivery / Attended
-  if (lower === 'entregue' || lower === 'entregado' || lower === 'entregada' || 
-      lower.includes('entrega efetuada') || lower.includes('entrega realizada') ||
-      lower.includes('atendido total') || lower === 'atendido' || lower === 'atendida' ||
-      lower === 'concluido' || lower === 'concluida' || lower === 'finalizado' || 
-      lower === 'finalizada' || lower === 'recebido' || lower === 'recebida' || 
-      lower === 'baixado' || lower === 'baixada' || lower === 'liquidado') {
+  // 4. Full Delivery / Attended
+  if (lower.includes('entreg') || lower.includes('atendid') || lower.includes('concluid') || lower.includes('finalizad') || lower.includes('recebid') || lower.includes('baixad')) {
     return 'Entregue';
   }
 
-  // 4. In Transit / Transport
-  if (lower.includes('transporte') || lower.includes('transito') || lower.includes('em rota') || 
-      lower.includes('despachado') || lower.includes('saiu para entrega') || lower.includes('em viagem')) {
+  // 5. In Transit / Transport
+  if (lower.includes('transporte') || lower.includes('transito') || lower.includes('em rota') || lower.includes('despachado') || lower.includes('saiu para entrega') || lower.includes('viagem')) {
     return 'Em Transporte';
   }
 
-  // 5. Dispatched / Expedited
+  // 6. Expedited / Dispatched
   if (lower.includes('expedid') || lower.includes('expedicao') || lower.includes('embalad') || lower.includes('pronto para envio')) {
     return 'Expedida';
   }
 
-  // 6. Conference
+  // 7. Conference
   if (lower.includes('em conferencia') || lower.includes('conferindo')) {
     return 'Em Conferência';
   }
-  if (lower.includes('aguardando conferencia') || lower === 'conferido' || lower === 'conferida') {
+  if (lower.includes('aguardando conferencia') || lower.includes('fila de conferencia') || lower.includes('conferid')) {
     return 'Aguardando Conferência';
   }
 
-  // 7. Separation / Picking
+  // 8. Separation / Picking
   if (lower.includes('em separacao') || lower.includes('separando') || lower.includes('em atendimento') || lower.includes('atendendo')) {
     return 'Em Separação';
   }
-  if (lower.includes('aguardando separacao') || lower.includes('fila de separacao') || lower === 'separado' || lower === 'separada') {
+  if (lower.includes('aguardando separacao') || lower.includes('fila de separacao') || lower.includes('separad')) {
     return 'Aguardando Separação';
   }
 
-  // 8. Approval / Validation
-  if (lower.includes('aprovad') || lower.includes('validada') || lower.includes('validado') || 
-      lower.includes('autorizad') || lower.includes('confirmad') || lower.includes('liberad')) {
+  // 9. Awaiting Validation / Approval (MUST check "aguardando validacao" before general approval)
+  if (lower.includes('aguardando validacao') || lower.includes('para validacao') || lower.includes('pendente validacao')) {
+    return 'Aguardando Validação';
+  }
+  if (lower.includes('aguardando aprovacao') || lower.includes('para aprovacao') || lower.includes('pendente aprovacao') || lower.includes('solicitad') || lower.includes('pendente') || lower.includes('em analise')) {
+    return 'Aguardando Aprovação';
+  }
+
+  // 10. Approved / Validated
+  if (lower.includes('aprovado')) return 'Aprovado';
+  if (lower.includes('aprovad') || lower.includes('validada') || lower.includes('validado') || lower.includes('autorizad') || lower.includes('confirmad') || lower.includes('liberad')) {
     return 'Aprovada';
   }
 
-  // 9. Draft / Creation
+  // 11. Draft
   if (lower.includes('rascunho') || lower.includes('digitacao') || lower.includes('elaboracao')) {
     return 'Rascunho';
   }
 
-  // 10. Awaiting Approval / Initial state
-  if (lower.includes('aguardando aprovacao') || lower.includes('solicitad') || lower.includes('pendente') || 
-      lower.includes('criado') || lower.includes('criada') || lower.includes('aberto') || lower.includes('aberta') || 
-      lower.includes('analise') || lower.includes('em analise')) {
-    return 'Aguardando Aprovação';
-  }
-
   // Standard case-sensitive exact match fallback:
   const standardStatuses: OrderStatus[] = [
-    'Aguardando Aprovação', 'Aprovada', 'Aguardando Separação', 'Em Separação',
-    'Aguardando Conferência', 'Em Conferência', 'Expedida', 'Em Transporte',
-    'Entregue', 'Entregue Parcialmente', 'Rejeitada', 'Cancelada', 'Rascunho'
+    'Rascunho', 'Aguardando Validação', 'Aguardando Aprovação', 'Aprovado', 'Aprovada', 
+    'Aguardando Separação', 'Em Separação', 'Aguardando Conferência', 'Em Conferência', 
+    'Expedida', 'Em Transporte', 'Entregue', 'Entregue Parcialmente', 'Cancelado', 'Cancelada', 'Rejeitada'
   ];
   const exact = standardStatuses.find(s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') === lower);
   if (exact) return exact;
 
-  return 'Aguardando Aprovação';
+  return 'Aguardando Validação';
 }
 
 // Checks if a row is a junk/noise line (e.g. repeated headers, subtotals, page footers, summary lines)
@@ -731,19 +744,6 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     const entregador = colIndexEntregador !== -1 ? strValues[colIndexEntregador] : undefined;
     const historico = colIndexHistorico !== -1 ? strValues[colIndexHistorico] : undefined;
 
-    // Safety guard: If colIndexStatus had low confidence (score <= 35, e.g. was a "Status da Entrega" column)
-    // and status is 'Entregue' but the order has no delivered date or driver,
-    // do not falsely mark the entire order as delivered!
-    if (statusScore <= 35 && status === 'Entregue' && !data_prevista_entrega && !entregador) {
-      if (data_inicio_separacao || separador) {
-        status = 'Em Separação';
-      } else if (data_aprovacao || validador) {
-        status = 'Aprovada';
-      } else {
-        status = 'Aguardando Aprovação';
-      }
-    }
-
     // Excel merged-cell inheritance:
     // If codigo is empty but there was a previous order and this row contains medicine/item data:
     if (!codigo && lastActiveOrderCode && strValues.some(v => v.length > 0)) {
@@ -999,12 +999,13 @@ export function analyzeImport(parsedRows: ParsedRow[], currentOrders: Order[], f
       };
     }
 
-    // Check changes
+    // Check changes comprehensively across all order fields
     const changes: { field: string; oldVal: string; newVal: string }[] = [];
 
-    if (row.status && row.status !== existing.status_operacional) {
+    // Status check: compare with both operational and origin status
+    if (row.status && (row.status !== existing.status_operacional || row.status !== existing.status_origem)) {
       changes.push({
-        field: 'Status Operacional',
+        field: 'Status',
         oldVal: existing.status_operacional,
         newVal: row.status,
       });
@@ -1023,6 +1024,62 @@ export function analyzeImport(parsedRows: ParsedRow[], currentOrders: Order[], f
         field: 'Quantidade de Itens',
         oldVal: String(existing.quantidade_itens),
         newVal: String(row.itens),
+      });
+    }
+
+    if (row.tipo && row.tipo !== existing.tipo) {
+      changes.push({
+        field: 'Tipo de Pedido',
+        oldVal: existing.tipo,
+        newVal: row.tipo,
+      });
+    }
+
+    if (row.solicitante && row.solicitante !== existing.solicitante) {
+      changes.push({
+        field: 'Solicitante',
+        oldVal: existing.solicitante || '—',
+        newVal: row.solicitante,
+      });
+    }
+
+    if (row.validador && row.validador !== existing.validador) {
+      changes.push({
+        field: 'Validador',
+        oldVal: existing.validador || '—',
+        newVal: row.validador,
+      });
+    }
+
+    if (row.separador && row.separador !== existing.separador) {
+      changes.push({
+        field: 'Separador',
+        oldVal: existing.separador || '—',
+        newVal: row.separador,
+      });
+    }
+
+    if (row.entregador && row.entregador !== existing.entregador) {
+      changes.push({
+        field: 'Entregador',
+        oldVal: existing.entregador || '—',
+        newVal: row.entregador,
+      });
+    }
+
+    if (row.data_solicitacao && row.data_solicitacao !== existing.data_solicitacao) {
+      changes.push({
+        field: 'Data Solicitação',
+        oldVal: existing.data_solicitacao || '—',
+        newVal: row.data_solicitacao,
+      });
+    }
+
+    if (row.data_prevista_entrega && row.data_prevista_entrega !== existing.data_prevista_entrega) {
+      changes.push({
+        field: 'Previsão Entrega',
+        oldVal: existing.data_prevista_entrega || '—',
+        newVal: row.data_prevista_entrega,
       });
     }
 

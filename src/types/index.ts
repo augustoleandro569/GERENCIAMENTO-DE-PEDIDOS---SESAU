@@ -13,7 +13,9 @@ export type ProgramName =
 
 export type OrderStatus =
   | 'Rascunho'
+  | 'Aguardando Validação'
   | 'Aguardando Aprovação'
+  | 'Aprovado'
   | 'Aprovada'
   | 'Aguardando Separação'
   | 'Em Separação'
@@ -24,6 +26,7 @@ export type OrderStatus =
   | 'Entregue'
   | 'Entregue Parcialmente'
   | 'Rejeitada'
+  | 'Cancelado'
   | 'Cancelada';
 
 export type Priority = 'Baixa' | 'Normal' | 'Alta' | 'Urgente';
