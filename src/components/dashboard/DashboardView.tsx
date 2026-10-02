@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../hooks/useStore';
-import { calculateDeadlineSituation } from '../../utils/dateUtils';
+import { calculateDeadlineSituation, parseDateSafe } from '../../utils/dateUtils';
 import { StatusBadge, TypeTag, DeadlineBadge } from '../common/StatusBadge';
 import { 
   Package, 
@@ -35,15 +35,95 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
   const [selectedProgram, setSelectedProgram] = useState<string>('ALL');
   const [selectedType, setSelectedType] = useState<string>('ALL');
 
+  // Period Filter State
+  const [selectedPeriod, setSelectedPeriod] = useState<string>('ALL');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+
+  // Calculate active period range
+  const periodRange = useMemo(() => {
+    const now = new Date();
+    
+    if (selectedPeriod === 'ALL') {
+      return { start: null, end: null, label: 'Todo o Período' };
+    }
+    
+    if (selectedPeriod === 'HOJE') {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end, label: 'Hoje' };
+    }
+    
+    if (selectedPeriod === '7D') {
+      const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end, label: 'Últimos 7 dias' };
+    }
+    
+    if (selectedPeriod === '15D') {
+      const start = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end, label: 'Últimos 15 dias' };
+    }
+    
+    if (selectedPeriod === '30D') {
+      const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end, label: 'Últimos 30 dias' };
+    }
+    
+    if (selectedPeriod === 'ESTE_MES') {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      return { start, end, label: 'Este Mês' };
+    }
+    
+    if (selectedPeriod === 'MES_ANTERIOR') {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+      return { start, end, label: 'Mês Anterior' };
+    }
+    
+    if (selectedPeriod === 'CUSTOM') {
+      const start = startDate ? new Date(`${startDate}T00:00:00`) : null;
+      const end = endDate ? new Date(`${endDate}T23:59:59.999`) : null;
+      let label = 'Personalizado';
+      if (startDate && endDate) {
+        label = `${startDate.split('-').reverse().slice(0, 2).join('/')} a ${endDate.split('-').reverse().slice(0, 2).join('/')}`;
+      } else if (startDate) {
+        label = `A partir de ${startDate.split('-').reverse().slice(0, 2).join('/')}`;
+      } else if (endDate) {
+        label = `Até ${endDate.split('-').reverse().slice(0, 2).join('/')}`;
+      }
+      return { start, end, label };
+    }
+    
+    return { start: null, end: null, label: 'Todo o Período' };
+  }, [selectedPeriod, startDate, endDate]);
+
   // Filtered orders
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
       if (selectedUnit !== 'ALL' && order.unidade !== selectedUnit) return false;
       if (selectedProgram !== 'ALL' && order.programa !== selectedProgram) return false;
       if (selectedType !== 'ALL' && order.tipo !== selectedType) return false;
+
+      // Period filter validation
+      if (periodRange.start || periodRange.end) {
+        const dateStr = order.criado_em || order.data_solicitacao || order.data_inicio;
+        const oDate = parseDateSafe(dateStr);
+        if (oDate) {
+          if (periodRange.start && oDate < periodRange.start) return false;
+          if (periodRange.end && oDate > periodRange.end) return false;
+        }
+      }
+
       return true;
     });
-  }, [orders, selectedUnit, selectedProgram, selectedType]);
+  }, [orders, selectedUnit, selectedProgram, selectedType, periodRange]);
 
   // Schedules map
   const schedulesMap = useMemo(() => {
@@ -213,19 +293,67 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
               <span>Visão consolidada</span>
               <span>·</span>
               <span className="font-mono font-bold text-slate-800">{filteredOrders.length} pedidos monitorados</span>
-              <span>·</span>
-              <span className="hidden sm:inline">Clique nos cartões para filtrar</span>
+              {selectedPeriod !== 'ALL' && (
+                <>
+                  <span>·</span>
+                  <span className="inline-flex items-center gap-1 font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                    <Calendar className="w-3 h-3 text-blue-600" />
+                    {periodRange.label}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
 
         {/* Filters - Crisp Segmented Selects */}
         <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+          {/* Period Filter */}
+          <div className="relative flex-1 sm:flex-initial">
+            <Calendar className="w-3.5 h-3.5 text-blue-600 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <select
+              value={selectedPeriod}
+              onChange={(e) => setSelectedPeriod(e.target.value)}
+              className="w-full sm:w-44 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl pl-8 pr-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
+              title="Filtrar pedidos por período de tempo"
+            >
+              <option value="ALL">Todo o Período</option>
+              <option value="HOJE">Hoje</option>
+              <option value="7D">Últimos 7 dias</option>
+              <option value="15D">Últimos 15 dias</option>
+              <option value="30D">Últimos 30 dias</option>
+              <option value="ESTE_MES">Este Mês</option>
+              <option value="MES_ANTERIOR">Mês Anterior</option>
+              <option value="CUSTOM">Personalizado (Datas)...</option>
+            </select>
+          </div>
+
+          {/* Custom Date Inputs when 'CUSTOM' is selected */}
+          {selectedPeriod === 'CUSTOM' && (
+            <div className="flex items-center gap-1.5 bg-blue-50/70 border border-blue-200 p-1 rounded-xl text-xs">
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                title="Data inicial"
+              />
+              <span className="text-slate-400 font-bold text-[10px]">até</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                title="Data final"
+              />
+            </div>
+          )}
+
           {/* Unit Filter */}
           <select
             value={selectedUnit}
             onChange={(e) => setSelectedUnit(e.target.value)}
-            className="flex-1 sm:flex-initial sm:w-48 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
+            className="flex-1 sm:flex-initial sm:w-44 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
             title="Filtrar por Unidade Hospitalar"
           >
             <option value="ALL">Todas as Unidades ({units.length})</option>
@@ -240,7 +368,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
           <select
             value={selectedProgram}
             onChange={(e) => setSelectedProgram(e.target.value)}
-            className="flex-1 sm:flex-initial sm:w-40 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
+            className="flex-1 sm:flex-initial sm:w-36 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
             title="Filtrar por Programa / Especialidade"
           >
             <option value="ALL">Todos os Programas</option>
@@ -253,7 +381,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
           <select
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value)}
-            className="flex-1 sm:flex-initial sm:w-38 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
+            className="flex-1 sm:flex-initial sm:w-36 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 shadow-2xs transition-all cursor-pointer truncate"
             title="Filtrar por Tipo de Pedido"
           >
             <option value="ALL">Todos os Tipos</option>
@@ -262,12 +390,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
             ))}
           </select>
 
-          {(selectedUnit !== 'ALL' || selectedProgram !== 'ALL' || selectedType !== 'ALL') && (
+          {(selectedUnit !== 'ALL' || selectedProgram !== 'ALL' || selectedType !== 'ALL' || selectedPeriod !== 'ALL' || startDate !== '' || endDate !== '') && (
             <button
               onClick={() => {
                 setSelectedUnit('ALL');
                 setSelectedProgram('ALL');
                 setSelectedType('ALL');
+                setSelectedPeriod('ALL');
+                setStartDate('');
+                setEndDate('');
               }}
               className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 transition-all active:scale-95 cursor-pointer flex items-center gap-1 shadow-2xs shrink-0"
               title="Limpar todos os filtros ativos"
