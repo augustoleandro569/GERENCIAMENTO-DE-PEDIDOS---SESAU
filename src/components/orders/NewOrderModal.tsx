@@ -46,6 +46,10 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
   const [cronogramaId, setCronogramaId] = useState<string>('');
   const [observacoes, setObservacoes] = useState('');
 
+  const cleanCode = codigo.trim().toUpperCase();
+  const isCodeStandard = cleanCode.startsWith('SOL-2026-') && cleanCode.length >= 10;
+  const isCodeDuplicate = orders.some(o => o.codigo.toUpperCase() === cleanCode);
+
   if (!isOpen) return null;
 
   const getPresetDate = (daysFromToday: number) => {
@@ -64,9 +68,13 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!isCodeStandard || isCodeDuplicate) {
+      return;
+    }
+
     addOrder(
       {
-        codigo: codigo.trim() || defaultCode,
+        codigo: cleanCode,
         tipo,
         solicitante: solicitante.trim(),
         cpf: cpf.trim(),
@@ -127,16 +135,42 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
           {/* Row 1: Código & Tipo */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">
-                Código da Solicitação *
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-700 block">
+                  Código da Solicitação *
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setCodigo(defaultCode)}
+                  className="text-[10px] font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
+                >
+                  Gerar Próximo Disponível
+                </button>
+              </div>
               <input
                 type="text"
                 required
                 value={codigo}
-                onChange={(e) => setCodigo(e.target.value)}
-                className="w-full text-xs font-mono font-bold px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                onChange={(e) => setCodigo(e.target.value.toUpperCase())}
+                placeholder="SOL-2026-XXXXX"
+                className={`w-full text-xs font-mono font-bold px-3 py-2 border rounded-xl focus:bg-white focus:outline-none transition-all ${
+                  !isCodeStandard 
+                    ? 'bg-amber-50/60 border-amber-300 text-amber-900 focus:ring-2 focus:ring-amber-500/20'
+                    : isCodeDuplicate
+                    ? 'bg-rose-50/60 border-rose-300 text-rose-900 focus:ring-2 focus:ring-rose-500/20'
+                    : 'bg-slate-50 border-slate-200 text-slate-900 focus:ring-2 focus:ring-blue-500/20'
+                }`}
               />
+              {!isCodeStandard && (
+                <p className="text-[11px] text-amber-700 font-semibold mt-1">
+                  Padrão obrigatório: o código deve iniciar com <strong>SOL-2026-</strong> (ex: {defaultCode}).
+                </p>
+              )}
+              {isCodeStandard && isCodeDuplicate && (
+                <p className="text-[11px] text-rose-700 font-bold mt-1">
+                  Já existe um pedido cadastrado com o número {cleanCode}. O sistema não permite numeração duplicada.
+                </p>
+              )}
             </div>
 
             <div>
@@ -462,7 +496,8 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
             </button>
             <button
               type="submit"
-              className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-full shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+              disabled={!isCodeStandard || isCodeDuplicate}
+              className="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:pointer-events-none rounded-full shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
             >
               <Plus className="w-4 h-4" />
               <span>Cadastrar Pedido</span>

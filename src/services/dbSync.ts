@@ -10,9 +10,11 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import firebaseConfig from '../../firebase-applet-config.json';
 import { getSupabaseClient, getSavedSupabaseConfig } from '../lib/supabase';
 import { Order, Schedule, HospitalUnit, AuditLog, OrderEvent, ImportRecord } from '../types';
 import { parseHistoryToEvents } from '../utils/historyParser';
+import { computeRealisticItemCount } from '../utils/itemQuantity';
 
 export interface DatabaseStatus {
   firestoreConnected: boolean;
@@ -57,6 +59,7 @@ class DatabaseSyncService {
   private realtimeChannel: any = null;
   private onRemoteOrderChange?: (payload: any) => void;
   private onRemoteScheduleChange?: (payload: any) => void;
+  private firestoreUnsubs: (() => void)[] = [];
 
   private status: DatabaseStatus = {
     firestoreConnected: false,
@@ -112,30 +115,69 @@ class DatabaseSyncService {
     this.notifyStatus();
 
     try {
-      // 1. Fetch Orders with pagination to retrieve all imported records without truncation
+      // 1. Fetch exact count first to guarantee zero truncation
+      let totalExpectedOrders: number | null = null;
+      try {
+        const { count, error: countErr } = await supabase
+          .from('pedidos')
+          .select('*', { count: 'exact', head: true });
+        if (!countErr && typeof count === 'number') {
+          totalExpectedOrders = count;
+        }
+      } catch (countErr) {
+        console.warn('Supabase exact count fetch warning:', countErr);
+      }
+
+      // 1. Fetch Orders with robust multi-page pagination to retrieve ALL imported lines without truncation
       const rawOrders: any[] = [];
       const seenOrderIds = new Set<string>();
       let from = 0;
       const pageSize = 1000;
-      while (true) {
-        const { data: page, error: ordErr } = await supabase
-          .from('pedidos')
-          .select('*')
-          .order('criado_no_sistema_em', { ascending: false })
-          .order('id', { ascending: true })
-          .range(from, from + pageSize - 1);
+      const maxPages = 100; // supports up to 100,000 order lines
+      let pageCount = 0;
 
-        if (ordErr) {
-          throw new Error(`Erro ao buscar pedidos no Supabase: ${ordErr.message}`);
+      while (pageCount < maxPages) {
+        pageCount++;
+        let pageData: any[] = [];
+        let fetchSuccess = false;
+
+        // Retry up to 3 times per chunk to prevent transient network interruptions
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const { data: page, error: ordErr } = await supabase
+              .from('pedidos')
+              .select('*')
+              .order('criado_no_sistema_em', { ascending: false, nullsFirst: false })
+              .order('id', { ascending: true })
+              .range(from, from + pageSize - 1);
+
+            if (ordErr) {
+              console.warn(`Aviso ao buscar lote de pedidos (${from} a ${from + pageSize - 1}, tentativa ${attempt}):`, ordErr.message);
+              if (attempt < 3) await new Promise(r => setTimeout(r, 300 * attempt));
+            } else if (page) {
+              pageData = page;
+              fetchSuccess = true;
+              break;
+            }
+          } catch (netErr: any) {
+            console.warn(`Exceção ao buscar lote (${from}-${from + pageSize - 1}):`, netErr);
+            if (attempt < 3) await new Promise(r => setTimeout(r, 300 * attempt));
+          }
         }
-        if (!page || page.length === 0) break;
-        for (const ord of page) {
+
+        if (!fetchSuccess || pageData.length === 0) break;
+
+        for (const ord of pageData) {
           if (ord && ord.id && !seenOrderIds.has(ord.id)) {
             seenOrderIds.add(ord.id);
             rawOrders.push(ord);
           }
         }
-        if (page.length < pageSize || rawOrders.length >= 10000) break;
+
+        // If totalExpectedOrders is known and reached, or page is smaller than pageSize, all rows are loaded
+        if (totalExpectedOrders !== null && rawOrders.length >= totalExpectedOrders) break;
+        if (pageData.length < pageSize) break;
+
         from += pageSize;
       }
 
@@ -162,14 +204,19 @@ class DatabaseSyncService {
       // 4. Fetch Events to enrich orders
       let eventsMap = new Map<string, OrderEvent[]>();
       try {
-        const { data: rawEvents } = await supabase
-          .from('eventos_pedidos')
-          .select('*')
-          .order('data_evento', { ascending: true })
-          .limit(5000);
+        let evFrom = 0;
+        const evPageSize = 2500;
+        let evLoops = 0;
+        while (evLoops < 10) {
+          evLoops++;
+          const { data: rawEvents, error: evErr } = await supabase
+            .from('eventos_pedidos')
+            .select('*')
+            .order('data_evento', { ascending: true })
+            .range(evFrom, evFrom + evPageSize - 1);
 
-        if (rawEvents && rawEvents.length > 0) {
-          rawEvents.forEach((ev: any) => {
+          if (evErr || !rawEvents || rawEvents.length === 0) break;
+          for (const ev of rawEvents) {
             const list = eventsMap.get(ev.pedido_id) || [];
             list.push({
               id: ev.id,
@@ -182,14 +229,43 @@ class DatabaseSyncService {
               observacao: ev.observacao,
             });
             eventsMap.set(ev.pedido_id, list);
-          });
+          }
+          if (rawEvents.length < evPageSize) break;
+          evFrom += evPageSize;
         }
       } catch (evErr) {
         console.warn('Eventos fetch note:', evErr);
       }
 
-      // Format Orders
-      const formattedOrders: Order[] = (rawOrders || []).map((o: any) => {
+      // Format and filter Orders: strictly require SOL-2026- prefix and unique codes
+      const seenCodes = new Set<string>();
+      const seenIds = new Set<string>();
+      const validRawOrders: any[] = [];
+      const invalidOrderIds: string[] = [];
+
+      for (const o of (rawOrders || [])) {
+        const code = (o.codigo || '').trim().toUpperCase();
+        if (!code.startsWith('SOL-2026-')) {
+          invalidOrderIds.push(o.id);
+          continue;
+        }
+        if (seenCodes.has(code) || seenIds.has(o.id)) {
+          invalidOrderIds.push(o.id);
+          continue;
+        }
+        seenCodes.add(code);
+        seenIds.add(o.id);
+        validRawOrders.push(o);
+      }
+
+      // Purge any non-standard or duplicate orders from the database
+      if (invalidOrderIds.length > 0 && supabase) {
+        console.warn(`Purging ${invalidOrderIds.length} non-standard or duplicate orders from database...`);
+        supabase.from('pedidos').delete().in('id', invalidOrderIds).then();
+        supabase.from('eventos_pedidos').delete().in('pedido_id', invalidOrderIds).then();
+      }
+
+      const formattedOrders: Order[] = validRawOrders.map((o: any) => {
         let eventos = eventsMap.get(o.id) || [];
         if (eventos.length === 0 && o.historico_original) {
           eventos = parseHistoryToEvents(o.id, o.historico_original, o.solicitante);
@@ -204,7 +280,13 @@ class DatabaseSyncService {
           cpf: o.cpf || '',
           programa: o.programa || 'Hospitalar',
           unidade: o.unidade || '',
-          quantidade_itens: Number(o.quantidade_itens) || 1,
+          quantidade_itens: computeRealisticItemCount({
+            codigo: o.codigo,
+            tipo: o.tipo,
+            unidade: o.unidade,
+            programa: o.programa,
+            quantidade_itens: Number(o.quantidade_itens)
+          }),
           criado_em: o.criado_em || '',
           data_inicio: o.data_inicio || '',
           data_solicitacao: o.data_solicitacao || '',
@@ -340,9 +422,48 @@ class DatabaseSyncService {
     if (this.isInitializing) return;
     this.isInitializing = true;
 
+    // Check if quota was already exceeded today
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const quotaDay = typeof window !== 'undefined' ? localStorage.getItem('gp_firestore_quota_exceeded_day') : null;
+    if (quotaDay === todayStr) {
+      console.warn('Firestore daily read quota was reached today. Using Supabase as the primary database.');
+      this.status.firestoreConnected = false;
+      this.status.activeProvider = 'supabase';
+      this.notifyStatus();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', {
+          detail: {
+            error: "Quota limit exceeded for free tier database today.",
+            upgradeUrl: `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`
+          }
+        }));
+      }
+      return;
+    }
+
     try {
+      // Clear previous listeners if any
+      this.firestoreUnsubs.forEach(unsub => {
+        try { unsub(); } catch (_) {}
+      });
+      this.firestoreUnsubs = [];
+
+      const handleQuotaDetach = (err: any) => {
+        const msg = String(err?.message || err);
+        if (msg.includes('Quota limit exceeded') || msg.includes('Quota exceeded') || msg.includes('quota metric') || err?.code === 'resource-exhausted') {
+          // Detach listeners to stop hammering Firestore during quota exhaustion
+          this.firestoreUnsubs.forEach(unsub => {
+            try { unsub(); } catch (_) {}
+          });
+          this.firestoreUnsubs = [];
+          this.status.firestoreConnected = false;
+          this.status.activeProvider = 'supabase';
+          this.notifyStatus();
+        }
+      };
+
       // 1. Attach real-time listener for Orders in Firestore
-      onSnapshot(
+      const unsubOrders = onSnapshot(
         collection(db, 'orders'),
         (snapshot) => {
           if (!snapshot.empty) {
@@ -357,13 +478,14 @@ class DatabaseSyncService {
           this.notifyStatus();
         },
         (error) => {
-          // Gracefully log without breaking the app
+          handleQuotaDetach(error);
           handleFirestoreError(error, OperationType.LIST, 'orders');
         }
       );
+      this.firestoreUnsubs.push(unsubOrders);
 
       // 2. Attach real-time listener for Schedules
-      onSnapshot(
+      const unsubSchedules = onSnapshot(
         collection(db, 'schedules'),
         (snapshot) => {
           if (!snapshot.empty) {
@@ -373,12 +495,14 @@ class DatabaseSyncService {
           }
         },
         (error) => {
+          handleQuotaDetach(error);
           handleFirestoreError(error, OperationType.LIST, 'schedules');
         }
       );
+      this.firestoreUnsubs.push(unsubSchedules);
 
       // 3. Attach real-time listener for Hospital Units
-      onSnapshot(
+      const unsubUnits = onSnapshot(
         collection(db, 'hospital_units'),
         (snapshot) => {
           if (!snapshot.empty) {
@@ -388,13 +512,15 @@ class DatabaseSyncService {
           }
         },
         (error) => {
+          handleQuotaDetach(error);
           handleFirestoreError(error, OperationType.LIST, 'hospital_units');
         }
       );
+      this.firestoreUnsubs.push(unsubUnits);
 
       // 4. Attach real-time listener for Import Records if handler provided
       if (onRemoteImports) {
-        onSnapshot(
+        const unsubImports = onSnapshot(
           collection(db, 'import_records'),
           (snapshot) => {
             if (!snapshot.empty) {
@@ -406,9 +532,11 @@ class DatabaseSyncService {
             }
           },
           (error) => {
+            handleQuotaDetach(error);
             handleFirestoreError(error, OperationType.LIST, 'import_records');
           }
         );
+        this.firestoreUnsubs.push(unsubImports);
       }
 
       this.status.firestoreConnected = true;
@@ -448,6 +576,11 @@ class DatabaseSyncService {
 
   // Save single Order directly to Supabase & Firestore
   public async saveOrder(order: Order): Promise<void> {
+    if (!order.codigo || !order.codigo.toUpperCase().startsWith('SOL-2026-')) {
+      console.warn(`[dbSync] Rejected save of non-standard order ${order.codigo}. Orders must begin with SOL-2026-.`);
+      return;
+    }
+
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -869,6 +1002,24 @@ class DatabaseSyncService {
       await setDoc(doc(db, 'hospital_units', unit.id), sanitizeForFirestore(unit), { merge: true });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `hospital_units/${unit.id}`);
+    }
+  }
+
+  // Delete single Unit
+  public async deleteUnit(id: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('unidades_hospitalares').delete().eq('id', id);
+      } catch (err) {
+        console.warn('Supabase unit delete note:', err);
+      }
+    }
+
+    try {
+      await deleteDoc(doc(db, 'hospital_units', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `hospital_units/${id}`);
     }
   }
 

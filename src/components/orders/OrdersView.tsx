@@ -67,9 +67,9 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const [sortField, setSortField] = useState<SortField>('criado_em');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  // Pagination
+  // Pagination & Display limit
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 25;
+  const [pageSize, setPageSize] = useState<number | 'ALL'>(100);
 
   const schedulesMap = useMemo(() => {
     const map = new Map<string, typeof schedules[0]>();
@@ -212,11 +212,12 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
   // Paginated items
   const paginatedOrders = useMemo(() => {
+    if (pageSize === 'ALL') return sortedOrders;
     const start = (currentPage - 1) * pageSize;
     return sortedOrders.slice(start, start + pageSize);
   }, [sortedOrders, currentPage, pageSize]);
 
-  const totalPages = Math.ceil(sortedOrders.length / pageSize) || 1;
+  const totalPages = pageSize === 'ALL' ? 1 : (Math.ceil(sortedOrders.length / pageSize) || 1);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -357,208 +358,211 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Top Controls Bar - Crisp, Solid Header Container */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-300 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
-            <Zap className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-base font-bold text-slate-950 tracking-tight whitespace-nowrap">
-                Solicitações & Pedidos
-              </h2>
-              <span className="text-[11px] font-mono text-blue-800 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200 font-bold shrink-0">
-                {filteredOrders.length} {filteredOrders.length === 1 ? 'item' : 'itens'}
-              </span>
+      {/* Consolidated Top Control & Filtering Center */}
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden divide-y divide-slate-100">
+        {/* Tier 1: View Header, Mode Switcher & Export */}
+        <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+              <Zap className="w-5 h-5" />
             </div>
-            <p className="text-xs text-slate-500 font-medium mt-0.5 truncate max-w-xl">
-              Clique no status para alterar em 1 clique ou clique na linha para abrir a linha do tempo completa
-            </p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base font-bold text-slate-900 tracking-tight whitespace-nowrap">
+                  Solicitações & Pedidos
+                </h2>
+                <span className="text-[11px] font-mono text-blue-900 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200 font-bold shrink-0">
+                  {filteredOrders.length === orders.length 
+                    ? `${orders.length} linhas de pedido`
+                    : `${filteredOrders.length} de ${orders.length} linhas`}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 font-medium mt-0.5 truncate max-w-xl">
+                Altere status com 1 clique ou clique na linha para abrir a linha do tempo e auditoria
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0 self-start md:self-auto">
+            {/* Segmented View Switcher */}
+            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs shadow-2xs">
+              <button
+                onClick={() => setViewMode('tabela')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
+                  viewMode === 'tabela'
+                    ? 'bg-white text-slate-900 border border-slate-200 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
+                }`}
+              >
+                <Table className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>Tabela</span>
+              </button>
+              <button
+                onClick={() => setViewMode('kanban')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
+                  viewMode === 'kanban'
+                    ? 'bg-white text-slate-900 border border-slate-200 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
+                }`}
+              >
+                <Kanban className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                <span>Kanban</span>
+              </button>
+              <button
+                onClick={() => setViewMode('calendario')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
+                  viewMode === 'calendario'
+                    ? 'bg-white text-slate-900 border border-slate-200 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
+                }`}
+              >
+                <CalendarIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Calendário</span>
+              </button>
+            </div>
+
+            {/* Export Action */}
+            <button
+              onClick={() => handleExport('xlsx')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-800 bg-white hover:bg-slate-50 hover:shadow-xs active:scale-95 border border-slate-200 rounded-xl transition-all cursor-pointer shadow-2xs whitespace-nowrap"
+              title="Exportar pedidos para Excel (.xlsx)"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>Exportar Excel</span>
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 self-start md:self-auto">
-          {/* Segmented View Switcher - Crisp Segmented Control */}
-          <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-300 text-xs shadow-2xs">
-            <button
-              onClick={() => setViewMode('tabela')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
-                viewMode === 'tabela'
-                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
-              }`}
-            >
-              <Table className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-              <span>Tabela</span>
-            </button>
-            <button
-              onClick={() => setViewMode('kanban')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
-                viewMode === 'kanban'
-                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
-              }`}
-            >
-              <Kanban className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-              <span>Kanban</span>
-            </button>
-            <button
-              onClick={() => setViewMode('calendario')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
-                viewMode === 'calendario'
-                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
-              }`}
-            >
-              <CalendarIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span>Calendário</span>
-            </button>
+        {/* Tier 2: Search Input & Multi-Select Dropdowns */}
+        <div className="p-3.5 bg-slate-50/50 flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+              placeholder="Buscar por código (ex: SOL-2026-03074), unidade, solicitante ou CPF..."
+              className="w-full pl-9 pr-8 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all text-slate-900 placeholder:text-slate-400 font-medium shadow-2xs"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] hover:bg-slate-300 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            )}
           </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+            {/* Multi-Select Unidades */}
+            <MultiSelect
+              options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
+              selected={selectedUnits}
+              onChange={(next) => { setSelectedUnits(next); setCurrentPage(1); }}
+              placeholder="Todas as Unidades"
+              className="flex-1 sm:flex-initial sm:w-48"
+              showSearch={true}
+            />
+
+            {/* Multi-Select Programas */}
+            <MultiSelect
+              options={programs.map(p => ({ id: p.nome, label: p.nome }))}
+              selected={selectedPrograms}
+              onChange={(next) => { setSelectedPrograms(next); setCurrentPage(1); }}
+              placeholder="Todos os Programas"
+              className="flex-1 sm:flex-initial sm:w-44"
+            />
+
+            {/* Multi-Select Tipos */}
+            <MultiSelect
+              options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
+              selected={selectedTypes}
+              onChange={(next) => { setSelectedTypes(next); setCurrentPage(1); }}
+              placeholder="Todos os Tipos"
+              className="flex-1 sm:flex-initial sm:w-40"
+            />
+
+            {(selectedUnits.length > 0 || selectedPrograms.length > 0 || selectedTypes.length > 0 || selectedQuickFilters.length > 0 || searchTerm) && (
+              <button
+                onClick={handleClearFilters}
+                className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs whitespace-nowrap shrink-0"
+                title="Limpar todos os filtros ativos"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Limpar Filtros</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Tier 3: Directed Status & SLA Filter Ribbon */}
+        <div className="px-4 py-2.5 bg-white flex items-center gap-2 overflow-x-auto text-xs scrollbar-none">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 shrink-0 mr-1 hidden sm:inline">
+            Status & SLA:
+          </span>
 
           <button
-            onClick={() => handleExport('xlsx')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-800 bg-white hover:bg-slate-50 hover:shadow-xs active:scale-95 border border-slate-300 rounded-xl transition-all cursor-pointer shadow-2xs whitespace-nowrap"
-            title="Exportar para Excel"
+            onClick={() => { setSelectedQuickFilters([]); setCurrentPage(1); }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap shrink-0 text-xs ${
+              selectedQuickFilters.length === 0
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900'
+            }`}
           >
-            <Download className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-            <span className="hidden sm:inline">Excel</span>
+            <span>Todos</span>
+            <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+              selectedQuickFilters.length === 0 ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+            }`}>
+              {quickFilterCounts.todos}
+            </span>
           </button>
+
+          {[
+            { id: 'NO_PRAZO', label: '🟢 No Prazo', count: quickFilterCounts.noPrazo },
+            { id: 'FORA_DO_PRAZO', label: '🔴 Fora do Prazo', count: quickFilterCounts.foraDoPrazo, isAlert: true },
+            { id: 'AGUARDANDO', label: 'Aguardando Aprovação', count: quickFilterCounts.aguardando },
+            { id: 'SEPARACAO', label: 'Em Separação', count: quickFilterCounts.separacao },
+            { id: 'TRANSPORTE', label: 'Em Transporte', count: quickFilterCounts.transporte },
+            { id: 'ENTREGUE', label: 'Entregues', count: quickFilterCounts.entregue },
+            { id: 'EMERGENCIAL', label: 'Emergenciais / Falta', count: quickFilterCounts.emergencial, isUrgent: true },
+          ].map(chip => {
+            const isSelected = selectedQuickFilters.includes(chip.id);
+            const handleToggleChip = () => {
+              if (isSelected) {
+                setSelectedQuickFilters(prev => prev.filter(c => c !== chip.id));
+              } else {
+                setSelectedQuickFilters(prev => [...prev, chip.id]);
+              }
+              setCurrentPage(1);
+            };
+
+            return (
+              <button
+                key={chip.id}
+                onClick={handleToggleChip}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap shrink-0 text-xs ${
+                  isSelected
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900'
+                }`}
+              >
+                {chip.isUrgent && (
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping mr-0.5" />
+                )}
+                {chip.isAlert && (
+                  <AlertCircle className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-red-500'}`} />
+                )}
+                <span>{chip.label}</span>
+                <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+                  isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+                }`}>
+                  {chip.count}
+                </span>
+              </button>
+            );
+          })}
         </div>
-      </div>
-
-      {/* Crisp Solid Filter Bar - Perfectly bounded with zero horizontal overflow */}
-      <div className="bg-white p-3.5 rounded-2xl border border-slate-300 shadow-xs flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 w-full">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-            placeholder="Buscar por código, unidade, solicitante ou CPF..."
-            className="w-full pl-9 pr-8 py-2 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all text-slate-900 placeholder:text-slate-400 font-medium shadow-2xs"
-          />
-          {searchTerm && (
-            <button
-              onClick={() => setSearchTerm('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] hover:bg-slate-300 transition-colors cursor-pointer"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
-          {/* Multi-Select Unidades */}
-          <MultiSelect
-            options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
-            selected={selectedUnits}
-            onChange={(next) => { setSelectedUnits(next); setCurrentPage(1); }}
-            placeholder="Todas as Unidades"
-            className="flex-1 sm:flex-initial sm:w-48"
-            showSearch={true}
-          />
-
-          {/* Multi-Select Programas */}
-          <MultiSelect
-            options={programs.map(p => ({ id: p.nome, label: p.nome }))}
-            selected={selectedPrograms}
-            onChange={(next) => { setSelectedPrograms(next); setCurrentPage(1); }}
-            placeholder="Todos os Programas"
-            className="flex-1 sm:flex-initial sm:w-44"
-          />
-
-          {/* Multi-Select Tipos */}
-          <MultiSelect
-            options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
-            selected={selectedTypes}
-            onChange={(next) => { setSelectedTypes(next); setCurrentPage(1); }}
-            placeholder="Todos os Tipos"
-            className="flex-1 sm:flex-initial sm:w-40"
-          />
-
-          {(selectedUnits.length > 0 || selectedPrograms.length > 0 || selectedTypes.length > 0 || selectedQuickFilters.length > 0 || searchTerm) && (
-            <button
-              onClick={() => {
-                setSelectedUnits([]);
-                setSelectedPrograms([]);
-                setSelectedTypes([]);
-                setSelectedQuickFilters([]);
-                setSearchTerm('');
-                setCurrentPage(1);
-              }}
-              className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-2xs whitespace-nowrap shrink-0"
-              title="Limpar todos os filtros ativos"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>Limpar ({selectedUnits.length + selectedPrograms.length + selectedTypes.length + selectedQuickFilters.length})</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Interactive Rounded Quick Access Multi-Filter Pills */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <button
-          onClick={() => { setSelectedQuickFilters([]); setCurrentPage(1); }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all duration-150 cursor-pointer active:scale-95 ${
-            selectedQuickFilters.length === 0
-              ? 'bg-slate-900 text-white font-semibold shadow-xs scale-[1.02]'
-              : 'bg-white text-slate-600 border border-slate-200/90 hover:border-slate-400 hover:bg-slate-50'
-          }`}
-        >
-          <span>Todos</span>
-          <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-            selectedQuickFilters.length === 0 ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
-          }`}>
-            {quickFilterCounts.todos}
-          </span>
-        </button>
-
-        {[
-          { id: 'NO_PRAZO', label: '🟢 No Prazo', count: quickFilterCounts.noPrazo, color: 'border-emerald-300' },
-          { id: 'FORA_DO_PRAZO', label: '🔴 Fora do Prazo', count: quickFilterCounts.foraDoPrazo, color: 'border-rose-400', isAlert: true },
-          { id: 'AGUARDANDO', label: 'Aguardando Aprovação', count: quickFilterCounts.aguardando, color: 'border-amber-300' },
-          { id: 'SEPARACAO', label: 'Em Separação', count: quickFilterCounts.separacao, color: 'border-purple-300' },
-          { id: 'TRANSPORTE', label: 'Em Transporte', count: quickFilterCounts.transporte, color: 'border-orange-300' },
-          { id: 'ENTREGUE', label: 'Entregues', count: quickFilterCounts.entregue, color: 'border-emerald-300' },
-          { id: 'EMERGENCIAL', label: 'Emergenciais / Falta', count: quickFilterCounts.emergencial, color: 'border-rose-300', isUrgent: true },
-        ].map(chip => {
-          const isSelected = selectedQuickFilters.includes(chip.id);
-          const handleToggleChip = () => {
-            if (isSelected) {
-              setSelectedQuickFilters(prev => prev.filter(c => c !== chip.id));
-            } else {
-              setSelectedQuickFilters(prev => [...prev, chip.id]);
-            }
-            setCurrentPage(1);
-          };
-
-          return (
-            <button
-              key={chip.id}
-              onClick={handleToggleChip}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all duration-150 cursor-pointer active:scale-95 ${
-                isSelected
-                  ? 'bg-slate-900 text-white font-semibold shadow-xs scale-[1.02]'
-                  : 'bg-white text-slate-600 border border-slate-200/90 hover:border-slate-400 hover:bg-slate-50'
-              }`}
-            >
-              {chip.isUrgent && (
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping mr-0.5" />
-              )}
-              {chip.isAlert && (
-                <AlertCircle className={`w-3 h-3 ${isSelected ? 'text-white' : 'text-red-500'}`} />
-              )}
-              <span>{chip.label}</span>
-              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
-              }`}>
-                {chip.count}
-              </span>
-            </button>
-          );
-        })}
       </div>
 
       {/* VIEW 1: REFINED INTERACTIVE TABELA */}
@@ -733,34 +737,93 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             </table>
           </div>
 
-          {/* Slender Rounded Pagination Bar */}
-          <div className="p-3 border-t border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-            <div className="text-[11px]">
-              Mostrando <span className="font-mono font-bold text-slate-800">{Math.min(sortedOrders.length, (currentPage - 1) * pageSize + 1)}</span> a <span className="font-mono font-bold text-slate-800">{Math.min(sortedOrders.length, currentPage * pageSize)}</span> de <span className="font-mono font-bold text-slate-800">{sortedOrders.length}</span> registros
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-full border border-slate-200/90 bg-white hover:bg-slate-100 disabled:opacity-40 transition-all font-medium cursor-pointer shadow-2xs"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span>Anterior</span>
-              </button>
-
-              <span className="font-mono text-[11px] px-3 py-1 bg-white rounded-full border border-slate-200/90 text-slate-700 font-bold shadow-2xs">
-                {currentPage} / {totalPages}
+          {/* Crisp, Sharp Pagination & Display Bar */}
+          <div className="p-3 border-t border-slate-200 bg-slate-50/70 flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-medium text-slate-700">
+                {pageSize === 'ALL' ? (
+                  <>Apresentando <span className="font-mono font-bold text-blue-900 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">todas as {sortedOrders.length}</span> linhas de pedido</>
+                ) : (
+                  <>
+                    Mostrando <span className="font-mono font-bold text-slate-900">{(currentPage - 1) * pageSize + 1}</span> a{' '}
+                    <span className="font-mono font-bold text-slate-900">{Math.min(sortedOrders.length, currentPage * pageSize)}</span> de{' '}
+                    <span className="font-mono font-bold text-blue-900 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">{sortedOrders.length}</span> linhas de pedido
+                  </>
+                )}
               </span>
 
+              {/* Toggle Quick All Button */}
               <button
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage >= totalPages}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-full border border-slate-200/90 bg-white hover:bg-slate-100 disabled:opacity-40 transition-all font-medium cursor-pointer shadow-2xs"
+                onClick={() => {
+                  if (pageSize === 'ALL') {
+                    setPageSize(100);
+                    setCurrentPage(1);
+                  } else {
+                    setPageSize('ALL');
+                    setCurrentPage(1);
+                  }
+                }}
+                className={`text-[11px] px-2.5 py-1 rounded-lg border font-bold transition-all cursor-pointer shadow-2xs ${
+                  pageSize === 'ALL'
+                    ? 'bg-blue-600 text-white border-blue-700 hover:bg-blue-700'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100 hover:text-slate-950'
+                }`}
+                title={pageSize === 'ALL' ? 'Ativar paginação' : 'Apresentar todas as linhas de pedido na mesma página'}
               >
-                <span>Próximo</span>
-                <ChevronRight className="w-3.5 h-3.5" />
+                {pageSize === 'ALL' ? 'Paginar (100/pág)' : `Ver Todas as ${sortedOrders.length} Linhas`}
               </button>
+            </div>
+
+            {/* Page Size & Navigation Controls */}
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* Page size dropdown */}
+              <div className="flex items-center gap-1.5 text-[11px]">
+                <span className="text-slate-500 font-medium">Linhas por página:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    const val = e.target.value === 'ALL' ? 'ALL' : Number(e.target.value);
+                    setPageSize(val);
+                    setCurrentPage(1);
+                  }}
+                  className="bg-white border border-slate-300 text-slate-800 text-[11px] font-bold rounded-lg px-2 py-1 focus:ring-1 focus:ring-blue-500 cursor-pointer shadow-2xs"
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={250}>250</option>
+                  <option value={500}>500</option>
+                  <option value={1000}>1.000</option>
+                  <option value="ALL">Todas ({sortedOrders.length})</option>
+                </select>
+              </div>
+
+              {/* Navigation arrows (if not displaying ALL) */}
+              {pageSize !== 'ALL' && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 transition-all font-medium cursor-pointer shadow-2xs text-[11px]"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Anterior</span>
+                  </button>
+
+                  <span className="font-mono text-[11px] px-2.5 py-1 bg-white rounded-lg border border-slate-300 text-slate-800 font-bold shadow-2xs">
+                    {currentPage} / {totalPages}
+                  </span>
+
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-40 transition-all font-medium cursor-pointer shadow-2xs text-[11px]"
+                  >
+                    <span className="hidden sm:inline">Próximo</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

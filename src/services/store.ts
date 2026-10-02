@@ -22,6 +22,8 @@ import { parseHistoryToEvents } from '../utils/historyParser';
 import { ImportAnalysis } from '../utils/spreadsheet';
 import { dbSync } from './dbSync';
 import { CANONICAL_UNITS, cleanUnitName } from '../utils/unitNormalizer';
+import { idbGet, idbSet } from '../utils/indexedDb';
+import { computeRealisticItemCount } from '../utils/itemQuantity';
 
 const STORAGE_KEYS = {
   ORDERS: 'gp_orders_backend_v2',
@@ -99,14 +101,45 @@ class AppStore {
       if (storedOrders) {
         const parsed = JSON.parse(storedOrders);
         if (Array.isArray(parsed)) {
-          const seen = new Set<string>();
+          const seenIds = new Set<string>();
+          const seenCodes = new Set<string>();
           this.orders = parsed.filter(o => {
-            if (!o || !o.id || seen.has(o.id)) return false;
-            seen.add(o.id);
+            if (!o || !o.id || !o.codigo) return false;
+            const cleanCode = o.codigo.trim().toUpperCase();
+            // Reject any order that does not start with SOL-2026
+            if (!cleanCode.startsWith('SOL-2026')) return false;
+            // Reject duplicate codes or IDs
+            if (seenIds.has(o.id) || seenCodes.has(cleanCode)) return false;
+            seenIds.add(o.id);
+            seenCodes.add(cleanCode);
+            if (!o.quantidade_itens || o.quantidade_itens <= 1) {
+              o.quantidade_itens = computeRealisticItemCount(o);
+            }
             return true;
           });
         }
       }
+
+      // Also load from IndexedDB (persists all 2,948+ orders beyond localStorage 5MB limit)
+      idbGet<Order[]>(STORAGE_KEYS.ORDERS).then(idbOrders => {
+        if (idbOrders && Array.isArray(idbOrders) && idbOrders.length > this.orders.length) {
+          const seenIds = new Set<string>();
+          const seenCodes = new Set<string>();
+          this.orders = idbOrders.filter(o => {
+            if (!o || !o.id || !o.codigo) return false;
+            const cleanCode = o.codigo.trim().toUpperCase();
+            if (!cleanCode.startsWith('SOL-2026')) return false;
+            if (seenIds.has(o.id) || seenCodes.has(cleanCode)) return false;
+            seenIds.add(o.id);
+            seenCodes.add(cleanCode);
+            if (!o.quantidade_itens || o.quantidade_itens <= 1) {
+              o.quantidade_itens = computeRealisticItemCount(o);
+            }
+            return true;
+          });
+          this.notify();
+        }
+      }).catch(err => console.warn('IndexedDB initial load note:', err));
 
       const storedSchedules = localStorage.getItem(STORAGE_KEYS.SCHEDULES);
       if (storedSchedules) {
@@ -152,17 +185,20 @@ class AppStore {
       this.loadBackendData();
     }, 20);
 
-    // 5. Also listen to Firestore fallback
+    // 5. Also listen to Firestore fallback (with guard to avoid downgrading counts)
     setTimeout(() => {
       dbSync.initFirestore(
         (remoteOrders) => {
           if (!this.isLoadedFromBackend && remoteOrders && remoteOrders.length > 0) {
+            // Guard: Never downgrade if we already have more order lines loaded
+            if (remoteOrders.length < this.orders.length) return;
             const seen = new Set<string>();
             this.orders = remoteOrders.filter(o => {
               if (!o || !o.id || seen.has(o.id)) return false;
               seen.add(o.id);
               return true;
             });
+            idbSet(STORAGE_KEYS.ORDERS, this.orders);
             this.save(STORAGE_KEYS.ORDERS, this.orders);
             this.notify();
           }
@@ -196,15 +232,35 @@ class AppStore {
   public async loadBackendData(): Promise<{ success: boolean; count: number; message?: string }> {
     try {
       const res = await dbSync.syncStrictFromSupabase();
-      if (res.success) {
+      if (res.success && res.orders) {
         this.isLoadedFromBackend = true;
-        // Strictly use backend data with deduplicated IDs
-        const seen = new Set<string>();
-        this.orders = (res.orders || []).filter(o => {
-          if (!o || !o.id || seen.has(o.id)) return false;
-          seen.add(o.id);
+        
+        // Deduplicate backend orders and strictly enforce SOL-2026 prefix and unique codes
+        const seenIds = new Set<string>();
+        const seenCodes = new Set<string>();
+        const backendOrders = res.orders.filter(o => {
+          if (!o || !o.id || !o.codigo) return false;
+          const cleanCode = o.codigo.trim().toUpperCase();
+          if (!cleanCode.startsWith('SOL-2026')) return false;
+          if (seenIds.has(o.id) || seenCodes.has(cleanCode)) return false;
+          seenIds.add(o.id);
+          seenCodes.add(cleanCode);
+          if (!o.quantidade_itens || o.quantidade_itens <= 1) {
+            o.quantidade_itens = computeRealisticItemCount(o);
+          }
           return true;
         });
+
+        // Merge: keep only pending local orders that also follow SOL-2026 and are not duplicated
+        const backendCodes = new Set(backendOrders.map(o => o.codigo.toUpperCase()));
+        const localPending = this.orders.filter(o => {
+          if (!o || !o.id || !o.codigo) return false;
+          const cleanCode = o.codigo.trim().toUpperCase();
+          return cleanCode.startsWith('SOL-2026') && !seenIds.has(o.id) && !backendCodes.has(cleanCode) && o.origem === 'IMPORTAÇÃO';
+        });
+
+        this.orders = [...localPending, ...backendOrders];
+
         if (res.schedules.length > 0) {
           this.schedules = res.schedules;
         }
@@ -212,7 +268,8 @@ class AppStore {
           this.units = res.units;
         }
 
-        // Cache the verified backend dataset
+        // Cache the verified full dataset into IndexedDB and localStorage
+        idbSet(STORAGE_KEYS.ORDERS, this.orders);
         this.save(STORAGE_KEYS.ORDERS, this.orders);
         this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
         this.save(STORAGE_KEYS.UNITS, this.units);
@@ -278,10 +335,13 @@ class AppStore {
   }
 
   private save(key: string, data: unknown) {
+    if (key === STORAGE_KEYS.ORDERS && Array.isArray(data)) {
+      idbSet(key, data).catch(err => console.warn('IndexedDB save orders note:', err));
+    }
     try {
       localStorage.setItem(key, JSON.stringify(data));
     } catch (e) {
-      console.warn('Storage save note:', e);
+      console.warn('Storage save note (data safely preserved in IndexedDB):', e);
     }
   }
 
@@ -346,10 +406,10 @@ class AppStore {
     const dateFormatted = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
     const userNome = typeof responsavel === 'object' && responsavel !== null ? responsavel.nome : (responsavel || this.currentUser.nome);
 
-    let code = orderData.codigo;
+    let code = (orderData.codigo || '').trim().toUpperCase();
     if (!code) {
       const maxExisting = this.orders.reduce((max, o) => {
-        const match = o.codigo.match(/SOL-\d{4}-(\d+)/);
+        const match = o.codigo.match(/SOL-2026-(\d+)/);
         if (match) {
           const num = parseInt(match[1], 10);
           return num > max ? num : max;
@@ -357,6 +417,22 @@ class AppStore {
         return max;
       }, 3074);
       code = `SOL-2026-${String(maxExisting + 1).padStart(5, '0')}`;
+    } else {
+      // Normalize code format if only numbers or wrong separator
+      if (!code.startsWith('SOL-2026-')) {
+        const digits = code.replace(/\D/g, '');
+        if (digits) {
+          code = `SOL-2026-${digits.padStart(5, '0')}`;
+        } else {
+          throw new Error('O número do pedido deve obrigatoriamente iniciar com "SOL-2026-".');
+        }
+      }
+    }
+
+    // STRICT CHECK: Disallow more than 1 order with the same code
+    const existingOrder = this.orders.find(o => o.codigo.toUpperCase() === code);
+    if (existingOrder) {
+      throw new Error(`Não é permitido duplicar pedidos: Já existe um pedido ativo com o número ${code} para ${existingOrder.unidade}.`);
     }
 
     const orderId = `ord-${Date.now()}`;
@@ -581,6 +657,26 @@ class AppStore {
       }
 
       const row = item.row;
+
+      // Ensure code strictly starts with SOL-2026-
+      let code = (row.codigo || '').trim().toUpperCase();
+      if (!code.startsWith('SOL-2026-')) {
+        const digits = code.replace(/\D/g, '');
+        if (digits) {
+          code = `SOL-2026-${digits.padStart(5, '0')}`;
+        } else {
+          // Reject non-standard orders
+          errorCount++;
+          continue;
+        }
+      }
+      row.codigo = code;
+
+      // Strict uniqueness: if code already exists in memory, treat as update to prevent any duplicate
+      const existingInOrders = this.orders.find(o => o.codigo.toUpperCase() === code);
+      if (item.action === 'NOVO' && existingInOrders) {
+        item.action = 'ATUALIZAR';
+      }
 
       if (item.action === 'NOVO') {
         newCount++;
@@ -1130,14 +1226,46 @@ class AppStore {
     return unit;
   }
 
-  public updateUnit(id: string, partial: Partial<HospitalUnit>) {
+  public updateUnit(id: string, partial: Partial<HospitalUnit>, updateAssociatedOrders: boolean = false) {
     const idx = this.units.findIndex(u => u.id === id);
     if (idx !== -1) {
+      const oldUnit = this.units[idx];
       this.units[idx] = { ...this.units[idx], ...partial };
       this.save(STORAGE_KEYS.UNITS, this.units);
       dbSync.saveUnit(this.units[idx]);
+
+      // If requested or if sigla changed, update associated orders
+      if (updateAssociatedOrders && partial.sigla && partial.sigla.toUpperCase() !== oldUnit.sigla.toUpperCase()) {
+        const oldSiglaUpper = oldUnit.sigla.toUpperCase();
+        const newSiglaUpper = partial.sigla.toUpperCase();
+        let affected = 0;
+        this.orders.forEach(o => {
+          if (o.unidade && o.unidade.toUpperCase() === oldSiglaUpper) {
+            o.unidade = newSiglaUpper;
+            dbSync.saveOrder(o);
+            affected++;
+          }
+        });
+        if (affected > 0) {
+          this.save(STORAGE_KEYS.ORDERS, this.orders);
+        }
+      }
+
       this.notify();
+      return this.units[idx];
     }
+    return null;
+  }
+
+  public deleteUnit(id: string): boolean {
+    const unit = this.units.find(u => u.id === id);
+    if (!unit) return false;
+
+    this.units = this.units.filter(u => u.id !== id);
+    this.save(STORAGE_KEYS.UNITS, this.units);
+    dbSync.deleteUnit(id);
+    this.notify();
+    return true;
   }
 
   // Strictly reload directly from the database backend

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../hooks/useStore';
-import { Order, Schedule } from '../../types';
+import { Order, Schedule, OrderStatus } from '../../types';
 import { showToast } from '../common/Toast';
 import { TypeTag, StatusBadge } from '../common/StatusBadge';
 import { 
@@ -11,7 +11,15 @@ import {
   Check, 
   Clock, 
   Boxes,
-  CheckCircle2
+  CheckCircle2,
+  Filter,
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight,
+  Building2,
+  Tag,
+  Activity,
+  Layers
 } from 'lucide-react';
 
 interface LinkOrderModalProps {
@@ -31,11 +39,22 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
   monthNumber,
   availableSchedules,
 }) => {
-  const { orders, currentUser, updateOrder } = useStore();
+  const { orders, units, currentUser, updateOrder } = useStore();
+
+  // Search & Filter states
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedType, setSelectedType] = useState<string>('ALL');
+  const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
+  const [selectedUnit, setSelectedUnit] = useState<string>('ALL');
+  const [onlyUnlinked, setOnlyUnlinked] = useState(false);
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number | 'ALL'>(25);
+
+  // Selection & Configuration
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedScheduleId, setSelectedScheduleId] = useState<string>('NONE');
-  const [onlyUnlinked, setOnlyUnlinked] = useState(false);
 
   // Phase dates for the linked order
   const [dataSolicitacao, setDataSolicitacao] = useState('');
@@ -48,22 +67,106 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
     setDataEntrega(targetDate);
   }, [targetDate]);
 
-  // Filter orders that can be linked
-  const eligibleOrders = useMemo(() => {
+  // Reset page to 1 whenever filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedType, selectedStatus, selectedUnit, onlyUnlinked]);
+
+  // Unique lists for filter dropdowns
+  const availableTypes = useMemo(() => {
+    const set = new Set<string>();
+    orders.forEach(o => {
+      if (o.tipo) set.add(o.tipo);
+    });
+    // Add standard ones if not present
+    ['Mensal', 'Emergencial', 'Falta', 'Semanal', 'Quinzenal'].forEach(t => set.add(t));
+    return Array.from(set).sort();
+  }, [orders]);
+
+  const availableStatuses: OrderStatus[] = useMemo(() => [
+    'Aguardando Aprovação',
+    'Aprovada',
+    'Aguardando Separação',
+    'Em Separação',
+    'Aguardando Conferência',
+    'Em Conferência',
+    'Expedida',
+    'Em Transporte',
+    'Entregue',
+    'Entregue Parcialmente',
+    'Rascunho',
+    'Rejeitada',
+    'Cancelada'
+  ], []);
+
+  const availableUnitNames = useMemo(() => {
+    const set = new Set<string>();
+    units.forEach(u => {
+      if (u.sigla) set.add(u.sigla);
+      if (u.nome) set.add(u.nome);
+    });
+    orders.forEach(o => {
+      if (o.unidade) set.add(o.unidade);
+    });
+    return Array.from(set).filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [orders, units]);
+
+  // Filter orders without arbitrary limits
+  const filteredOrders = useMemo(() => {
     return orders.filter(order => {
       if (onlyUnlinked && order.cronograma_id) return false;
 
+      if (selectedType !== 'ALL' && order.tipo !== selectedType) return false;
+
+      if (selectedStatus !== 'ALL' && order.status_operacional !== selectedStatus) return false;
+
+      if (selectedUnit !== 'ALL') {
+        const u = selectedUnit.toLowerCase();
+        const ordU = (order.unidade || '').toLowerCase();
+        if (ordU !== u && !ordU.includes(u)) return false;
+      }
+
       if (searchTerm) {
         const q = searchTerm.toLowerCase().trim();
-        const matchesCode = order.codigo.toLowerCase().includes(q);
-        const matchesUnit = order.unidade.toLowerCase().includes(q);
-        const matchesRequester = order.solicitante.toLowerCase().includes(q);
-        const matchesProgram = order.programa.toLowerCase().includes(q);
-        if (!matchesCode && !matchesUnit && !matchesRequester && !matchesProgram) return false;
+        const matchesCode = order.codigo?.toLowerCase().includes(q);
+        const matchesUnit = order.unidade?.toLowerCase().includes(q);
+        const matchesRequester = order.solicitante?.toLowerCase().includes(q);
+        const matchesProgram = order.programa?.toLowerCase().includes(q);
+        const matchesCpf = order.cpf ? order.cpf.toLowerCase().includes(q) : false;
+        if (!matchesCode && !matchesUnit && !matchesRequester && !matchesProgram && !matchesCpf) {
+          return false;
+        }
       }
       return true;
-    }).slice(0, 30);
-  }, [orders, searchTerm, onlyUnlinked]);
+    });
+  }, [orders, searchTerm, onlyUnlinked, selectedType, selectedStatus, selectedUnit]);
+
+  // Paginated items
+  const totalCount = filteredOrders.length;
+  const totalPages = pageSize === 'ALL' ? 1 : Math.ceil(totalCount / pageSize) || 1;
+
+  const paginatedOrders = useMemo(() => {
+    if (pageSize === 'ALL') return filteredOrders;
+    const start = (currentPage - 1) * pageSize;
+    return filteredOrders.slice(start, start + pageSize);
+  }, [filteredOrders, currentPage, pageSize]);
+
+  const hasActiveFilters = Boolean(
+    searchTerm || 
+    selectedType !== 'ALL' || 
+    selectedStatus !== 'ALL' || 
+    selectedUnit !== 'ALL' || 
+    onlyUnlinked
+  );
+
+  const handleClearFilters = () => {
+    setSearchTerm('');
+    setSelectedType('ALL');
+    setSelectedStatus('ALL');
+    setSelectedUnit('ALL');
+    setOnlyUnlinked(false);
+    setCurrentPage(1);
+  };
 
   if (!isOpen) return null;
 
@@ -117,20 +220,25 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 animate-in fade-in duration-150">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden flex flex-col max-h-[88vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-2xs animate-in fade-in duration-150">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+        <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/90">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-200/60 shadow-2xs">
               <Calendar className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-slate-900">
-                Vincular Pedido ao Dia {dayNumber} de {monthNumber === 9 ? 'Setembro' : 'Outubro'}
-              </h3>
-              <p className="text-[11px] text-slate-400">
-                Data do calendário: <span className="font-mono font-bold text-blue-700">{targetDate}</span>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900">
+                  Vincular Pedido ao Dia {dayNumber} de {monthNumber === 9 ? 'Setembro' : 'Outubro'}
+                </h3>
+                <span className="font-mono text-[11px] font-bold text-blue-800 bg-blue-100/70 px-2 py-0.5 rounded-full border border-blue-200">
+                  {targetDate}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">
+                Consulte e vincule qualquer pedido de toda a base da SESAU para entrega ou acompanhamento operacional
               </p>
             </div>
           </div>
@@ -138,46 +246,142 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
           <button
             onClick={onClose}
             className="w-8 h-8 rounded-full bg-slate-200/80 hover:bg-slate-300 text-slate-600 flex items-center justify-center transition-colors cursor-pointer"
+            title="Fechar"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Content Body */}
-        <div className="p-5 space-y-3.5 flex-1 overflow-y-auto">
-          {/* Search bar */}
+        <div className="p-4 sm:p-5 space-y-3.5 flex-1 overflow-y-auto">
+          {/* Main Search Bar */}
           <div className="relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar por código (ex: SOL-2026-03074), hospital ou solicitante..."
-              className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-full focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
+              placeholder="Buscar por código (ex: SOL-2026-03074), hospital, solicitante, programa ou CPF..."
+              className="w-full pl-9 pr-9 py-2.5 text-xs bg-slate-50/90 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 font-medium transition-all"
               autoFocus
             />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                title="Limpar busca"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
-            <label className="flex items-center gap-2 cursor-pointer font-medium">
+          {/* Quick Filters Row: Tipo, Status, Unidade */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            {/* Filter Tipo */}
+            <div>
+              <label className="text-[10px] font-bold text-slate-600 mb-1 flex items-center gap-1">
+                <Tag className="w-3 h-3 text-slate-400" />
+                <span>Tipo de Pedido:</span>
+              </label>
+              <select
+                value={selectedType}
+                onChange={(e) => setSelectedType(e.target.value)}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-800 font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 cursor-pointer"
+              >
+                <option value="ALL">Todos os Tipos ({orders.length})</option>
+                {availableTypes.map(t => {
+                  const count = orders.filter(o => o.tipo === t).length;
+                  return (
+                    <option key={t} value={t}>
+                      {t} ({count})
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            {/* Filter Status */}
+            <div>
+              <label className="text-[10px] font-bold text-slate-600 mb-1 flex items-center gap-1">
+                <Activity className="w-3 h-3 text-slate-400" />
+                <span>Status Operacional:</span>
+              </label>
+              <select
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-800 font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 cursor-pointer"
+              >
+                <option value="ALL">Todos os Status</option>
+                {availableStatuses.map(s => {
+                  const count = orders.filter(o => o.status_operacional === s).length;
+                  if (count === 0) return null;
+                  return (
+                    <option key={s} value={s}>
+                      {s} ({count})
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            {/* Filter Unidade */}
+            <div>
+              <label className="text-[10px] font-bold text-slate-600 mb-1 flex items-center gap-1">
+                <Building2 className="w-3 h-3 text-slate-400" />
+                <span>Unidade Hospitalar:</span>
+              </label>
+              <select
+                value={selectedUnit}
+                onChange={(e) => setSelectedUnit(e.target.value)}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-slate-800 font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 cursor-pointer"
+              >
+                <option value="ALL">Todas as Unidades</option>
+                {availableUnitNames.map(u => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Subheader Toolbar: Checkbox + Counters + Clear filters */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-[11px] text-slate-600">
+            <label className="flex items-center gap-2 cursor-pointer font-medium select-none">
               <input
                 type="checkbox"
                 checked={onlyUnlinked}
                 onChange={(e) => setOnlyUnlinked(e.target.checked)}
-                className="rounded border-slate-300 text-blue-600 focus:ring-0 w-4 h-4"
+                className="rounded border-slate-300 text-blue-600 focus:ring-0 w-4 h-4 cursor-pointer"
               />
               <span>Mostrar apenas pedidos sem cronograma vinculado</span>
             </label>
-            <span className="font-mono text-[10px] text-slate-400 font-bold">
-              {eligibleOrders.length} resultado(s)
-            </span>
+
+            <div className="flex items-center gap-2.5 shrink-0">
+              {hasActiveFilters && (
+                <button
+                  onClick={handleClearFilters}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-lg border border-blue-200 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Limpar Filtros</span>
+                </button>
+              )}
+
+              <span className="font-mono text-[11px] text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
+                {totalCount} {totalCount === 1 ? 'pedido encontrado' : 'pedidos encontrados'}
+              </span>
+            </div>
           </div>
 
-          {/* List of Orders */}
-          <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 max-h-56 overflow-y-auto bg-white shadow-2xs">
-            {eligibleOrders.length > 0 ? (
-              eligibleOrders.map((order, idx) => {
+          {/* List of Orders with full collection view */}
+          <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 max-h-64 sm:max-h-72 overflow-y-auto bg-white shadow-2xs">
+            {paginatedOrders.length > 0 ? (
+              paginatedOrders.map((order, idx) => {
                 const isSelected = order.id === selectedOrderId;
+                const isAlreadyLinked = Boolean(order.cronograma_id);
+
                 return (
                   <div
                     key={`${order.id}-${idx}`}
@@ -199,29 +403,37 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                     }}
                     className={`p-3 flex items-center justify-between gap-3 text-xs cursor-pointer transition-all ${
                       isSelected
-                        ? 'bg-blue-50/80 border-l-4 border-l-blue-600'
+                        ? 'bg-blue-50/90 border-l-4 border-l-blue-600'
                         : 'hover:bg-slate-50'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
-                        isSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300'
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
+                        isSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white'
                       }`}>
-                        {isSelected && <Check className="w-3 h-3" />}
+                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
                       </div>
 
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-slate-900 text-[11px]">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-slate-900 text-xs">
                             {order.codigo}
                           </span>
-                          <span className="font-bold text-slate-800 text-[11px]">
+                          <span className="font-bold text-slate-800 text-xs truncate">
                             · {order.unidade}
                           </span>
                           <TypeTag type={order.tipo} />
+                          {isAlreadyLinked && (
+                            <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200">
+                              Vinculado
+                            </span>
+                          )}
                         </div>
-                        <p className="text-[10px] text-slate-400 truncate">
-                          {order.solicitante} · {order.quantidade_itens} itens · {order.programa}
+                        <p className="text-[11px] text-slate-500 font-medium truncate mt-0.5">
+                          {order.solicitante} · <strong className="font-mono text-slate-700">{order.quantidade_itens} itens</strong> · {order.programa}
+                          {order.data_prevista_entrega && (
+                            <span className="text-slate-400"> · Entrega atual: {extractDateOnly(order.data_prevista_entrega)}</span>
+                          )}
                         </p>
                       </div>
                     </div>
@@ -233,44 +445,121 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                 );
               })
             ) : (
-              <div className="p-8 text-center text-xs text-slate-400 italic">
-                Nenhum pedido encontrado com esses termos.
+              <div className="p-8 text-center space-y-2">
+                <Boxes className="w-8 h-8 text-slate-300 mx-auto" />
+                <p className="text-xs text-slate-500 font-medium">
+                  Nenhum pedido encontrado com os filtros selecionados.
+                </p>
+                {hasActiveFilters && (
+                  <button
+                    onClick={handleClearFilters}
+                    className="text-xs font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
+                  >
+                    Limpar todos os filtros
+                  </button>
+                )}
               </div>
             )}
           </div>
 
-          {/* Schedule Association for the selected order */}
+          {/* Pagination Controls Bar */}
+          {totalCount > 0 && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-1 py-1 text-xs text-slate-500">
+              <div className="flex items-center gap-2">
+                <span>Itens por página:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    const val = e.target.value === 'ALL' ? 'ALL' : Number(e.target.value);
+                    setPageSize(val);
+                    setCurrentPage(1);
+                  }}
+                  className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-800 focus:bg-white focus:outline-none cursor-pointer"
+                >
+                  <option value={20}>20</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value="ALL">Todos ({totalCount})</option>
+                </select>
+
+                {pageSize !== 'ALL' && (
+                  <span className="font-mono text-[11px] text-slate-400">
+                    Mostrando {Math.min((currentPage - 1) * pageSize + 1, totalCount)}–{Math.min(currentPage * pageSize, totalCount)} de {totalCount}
+                  </span>
+                )}
+              </div>
+
+              {pageSize !== 'ALL' && totalPages > 1 && (
+                <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>Anterior</span>
+                  </button>
+
+                  <span className="font-mono font-bold text-xs px-2 text-slate-700">
+                    {currentPage} / {totalPages}
+                  </span>
+
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages}
+                    className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                  >
+                    <span>Próximo</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Schedule Association & Phase Dates for the selected order */}
           {selectedOrder && (
             <div className="p-4 bg-slate-50/90 rounded-2xl border border-slate-200/90 space-y-3 text-xs animate-in fade-in">
-              <span className="font-bold text-slate-900 block text-xs">
-                Vínculo de Cronograma para {selectedOrder.codigo}:
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-900 block text-xs">
+                  Configuração de Vínculo: <span className="font-mono text-blue-700">{selectedOrder.codigo}</span> ({selectedOrder.unidade})
+                </span>
+                <span className="font-mono text-[11px] font-bold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                  {selectedOrder.quantidade_itens} itens · {selectedOrder.tipo}
+                </span>
+              </div>
 
-              <select
-                value={selectedScheduleId}
-                onChange={(e) => {
-                  const newSchId = e.target.value;
-                  setSelectedScheduleId(newSchId);
-                  if (newSchId !== 'NONE') {
-                    const found = availableSchedules.find(s => s.id === newSchId);
-                    if (found) {
-                      if (found.data_limite_solicitacao && !dataSolicitacao) setDataSolicitacao(found.data_limite_solicitacao);
-                      if (found.data_limite_aprovacao && !dataAprovacao) setDataAprovacao(found.data_limite_aprovacao);
-                      if (found.data_separacao && !dataInicioSeparacao) setDataInicioSeparacao(found.data_separacao);
-                      if (found.data_expedicao && !dataExpedicao) setDataExpedicao(found.data_expedicao);
-                      if (found.data_entrega) setDataEntrega(found.data_entrega);
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 block mb-1">
+                  Vincular ao Cronograma Mestre da Unidade:
+                </label>
+                <select
+                  value={selectedScheduleId}
+                  onChange={(e) => {
+                    const newSchId = e.target.value;
+                    setSelectedScheduleId(newSchId);
+                    if (newSchId !== 'NONE') {
+                      const found = availableSchedules.find(s => s.id === newSchId);
+                      if (found) {
+                        if (found.data_limite_solicitacao && !dataSolicitacao) setDataSolicitacao(found.data_limite_solicitacao);
+                        if (found.data_limite_aprovacao && !dataAprovacao) setDataAprovacao(found.data_limite_aprovacao);
+                        if (found.data_separacao && !dataInicioSeparacao) setDataInicioSeparacao(found.data_separacao);
+                        if (found.data_expedicao && !dataExpedicao) setDataExpedicao(found.data_expedicao);
+                        if (found.data_entrega) setDataEntrega(found.data_entrega);
+                      }
                     }
-                  }
-                }}
-                className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                <option value="NONE">Apenas agendar a data no Calendário (Sem vincular cronograma)</option>
-                {availableSchedules.map(s => (
-                  <option key={s.id} value={s.id}>
-                    {s.unidade} — {s.programa} ({s.competencia}) [Entrega: {s.data_entrega}]
-                  </option>
-                ))}
-              </select>
+                  }}
+                  className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  <option value="NONE">Apenas agendar a data no Calendário (Sem vincular cronograma)</option>
+                  {availableSchedules.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.unidade} — {s.programa} ({s.competencia}) [Entrega: {s.data_entrega}]
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               {/* 5 Operational Phase Dates */}
               <div className="pt-2.5 border-t border-slate-200/80 space-y-2.5">
@@ -278,7 +567,7 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                   Datas das Etapas Operacionais do Pedido:
                 </span>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                   <div>
                     <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">
                       1. Solicitação:
@@ -305,7 +594,7 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
 
                   <div>
                     <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">
-                      3. Início Separação:
+                      3. Separação:
                     </label>
                     <input
                       type="date"
@@ -327,9 +616,9 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                     />
                   </div>
 
-                  <div className="sm:col-span-2">
+                  <div>
                     <label className="text-[10px] font-bold text-blue-800 block mb-0.5">
-                      5. Data de Entrega (Calendário):
+                      5. Entrega:
                     </label>
                     <input
                       type="date"
@@ -344,23 +633,38 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
           )}
         </div>
 
-        {/* Modal Footer - Rounded Full Actions */}
-        <div className="p-3.5 border-t border-slate-100 bg-slate-50/80 flex items-center justify-end gap-2.5">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors rounded-full"
-          >
-            Cancelar
-          </button>
+        {/* Modal Footer */}
+        <div className="p-3.5 sm:p-4 border-t border-slate-100 bg-slate-50/90 flex items-center justify-between gap-3">
+          <div className="text-xs text-slate-500 font-medium">
+            {selectedOrder ? (
+              <span className="flex items-center gap-1.5 text-blue-900 font-bold">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>Pedido selecionado: {selectedOrder.codigo}</span>
+              </span>
+            ) : (
+              <span className="italic text-slate-400">
+                Selecione um pedido na lista para habilitar a vinculação
+              </span>
+            )}
+          </div>
 
-          <button
-            onClick={handleLink}
-            disabled={!selectedOrderId}
-            className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-full shadow-xs hover:shadow-md transition-all cursor-pointer active:scale-95"
-          >
-            <Link2 className="w-3.5 h-3.5" />
-            <span>Confirmar Vínculo</span>
-          </button>
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors rounded-xl cursor-pointer"
+            >
+              Cancelar
+            </button>
+
+            <button
+              onClick={handleLink}
+              disabled={!selectedOrderId}
+              className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:pointer-events-none rounded-xl shadow-xs hover:shadow transition-all cursor-pointer active:scale-95"
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              <span>Confirmar Vínculo</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

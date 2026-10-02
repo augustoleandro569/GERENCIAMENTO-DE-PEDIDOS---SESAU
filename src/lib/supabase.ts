@@ -139,7 +139,7 @@ export async function testSupabaseConnection(url: string, key: string): Promise<
 }
 
 // SQL Schema for Supabase SQL Editor
-export const SUPABASE_SETUP_SQL = `-- SCRIPT DE CRIAÇÃO DAS TABELAS NO SUPABASE
+export const SUPABASE_SETUP_SQL = `-- SCRIPT OFICIAL SESAU - BANCO DE DADOS COMPLETO NO SUPABASE
 -- Cole este script no SQL Editor do seu painel Supabase (https://supabase.com/dashboard)
 
 -- 1. Tabela de Pedidos
@@ -211,12 +211,79 @@ CREATE TABLE IF NOT EXISTS public.unidades_hospitalares (
   criado_em TIMESTAMPTZ DEFAULT now()
 );
 
+-- 4. Tabela de Eventos e Linha do Tempo dos Pedidos
+CREATE TABLE IF NOT EXISTS public.eventos_pedidos (
+  id TEXT PRIMARY KEY,
+  pedido_id TEXT NOT NULL,
+  tipo_evento TEXT,
+  status TEXT,
+  data_evento TEXT,
+  responsavel TEXT,
+  origem TEXT DEFAULT 'SISTEMA',
+  observacao TEXT,
+  criado_em TIMESTAMPTZ DEFAULT now()
+);
+
+-- 5. Tabela de Histórico de Importações
+CREATE TABLE IF NOT EXISTS public.importacoes (
+  id TEXT PRIMARY KEY,
+  arquivo TEXT NOT NULL,
+  data_importacao TEXT NOT NULL,
+  usuario TEXT NOT NULL,
+  quantidade_registros INTEGER DEFAULT 0,
+  novos INTEGER DEFAULT 0,
+  atualizados INTEGER DEFAULT 0,
+  sem_alteracao INTEGER DEFAULT 0,
+  erros INTEGER DEFAULT 0,
+  criado_em TIMESTAMPTZ DEFAULT now()
+);
+
+-- 6. Tabela de Logs de Auditoria
+CREATE TABLE IF NOT EXISTS public.logs_auditoria (
+  id TEXT PRIMARY KEY,
+  pedido_id TEXT,
+  codigo_pedido TEXT,
+  usuario TEXT NOT NULL,
+  data_hora TEXT NOT NULL,
+  campo_alterado TEXT NOT NULL,
+  valor_anterior TEXT,
+  novo_valor TEXT,
+  criado_em TIMESTAMPTZ DEFAULT now()
+);
+
 -- Habilitar RLS (Row Level Security) e permitir acesso público/anon
 ALTER TABLE public.pedidos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cronogramas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.unidades_hospitalares ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.eventos_pedidos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.importacoes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.logs_auditoria ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Acesso público leitura e escrita pedidos" ON public.pedidos FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Acesso público leitura e escrita cronogramas" ON public.cronogramas FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Acesso público leitura e escrita unidades" ON public.unidades_hospitalares FOR ALL USING (true) WITH CHECK (true);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Acesso público leitura e escrita pedidos') THEN
+    CREATE POLICY "Acesso público leitura e escrita pedidos" ON public.pedidos FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Acesso público leitura e escrita cronogramas') THEN
+    CREATE POLICY "Acesso público leitura e escrita cronogramas" ON public.cronogramas FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Acesso público leitura e escrita unidades') THEN
+    CREATE POLICY "Acesso público leitura e escrita unidades" ON public.unidades_hospitalares FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Acesso público leitura e escrita eventos') THEN
+    CREATE POLICY "Acesso público leitura e escrita eventos" ON public.eventos_pedidos FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Acesso público leitura e escrita importacoes') THEN
+    CREATE POLICY "Acesso público leitura e escrita importacoes" ON public.importacoes FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Acesso público leitura e escrita auditoria') THEN
+    CREATE POLICY "Acesso público leitura e escrita auditoria" ON public.logs_auditoria FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
+-- Índices de Alta Performance para busca e ordenação rápida
+CREATE INDEX IF NOT EXISTS idx_pedidos_criado_no_sistema_em ON public.pedidos (criado_no_sistema_em DESC);
+CREATE INDEX IF NOT EXISTS idx_pedidos_status_operacional ON public.pedidos (status_operacional);
+CREATE INDEX IF NOT EXISTS idx_pedidos_unidade ON public.pedidos (unidade);
+CREATE INDEX IF NOT EXISTS idx_eventos_pedidos_pedido_id ON public.eventos_pedidos (pedido_id);
+CREATE INDEX IF NOT EXISTS idx_eventos_pedidos_data_evento ON public.eventos_pedidos (data_evento);
 `;

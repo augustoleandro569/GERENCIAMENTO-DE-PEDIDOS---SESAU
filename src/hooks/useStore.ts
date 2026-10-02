@@ -41,6 +41,7 @@ export function useStore() {
     runAutoLinking: store.runAutoLinking.bind(store),
     addUnit: store.addUnit.bind(store),
     updateUnit: store.updateUnit.bind(store),
+    deleteUnit: store.deleteUnit.bind(store),
     setCurrentUser: store.setCurrentUser.bind(store),
     updateSettings: store.updateSettings.bind(store),
     resetToDefault: store.resetToDefault.bind(store),

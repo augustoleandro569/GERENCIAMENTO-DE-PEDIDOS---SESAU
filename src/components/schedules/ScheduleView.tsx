@@ -429,36 +429,36 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
 
   return (
     <div className="space-y-4">
-      {/* Top Header - Crisp Solid Container */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-300 shadow-xs flex flex-col xl:flex-row xl:items-center justify-between gap-3 w-full">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-600 to-cyan-700 text-white flex items-center justify-center shadow-xs shrink-0">
+      {/* Top Header Controls Bar */}
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/90 shadow-2xs flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-emerald-700 via-teal-600 to-cyan-600 text-white flex items-center justify-center shadow-xs shrink-0">
             <CalendarIcon className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-base font-bold text-slate-950 tracking-tight">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
                 Cronograma & Calendário de Abastecimento
               </h2>
-              <span className="text-[11px] font-mono text-emerald-900 bg-emerald-100 px-2.5 py-0.5 rounded-md border border-emerald-300 font-extrabold shrink-0">
+              <span className="text-[11px] font-mono text-emerald-900 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 font-bold shrink-0">
                 {schedules.length} cronogramas ativos
               </span>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
               Mapeamento unificado de datas: Solicitação, Aprovação, Separação, Expedição e Entrega no Hospital
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0 self-start xl:self-auto">
           {/* Main Segmented Switcher: Calendário, Progresso, Lista */}
-          <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-300 text-xs shadow-2xs">
+          <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs shadow-2xs">
             <button
               onClick={() => setActiveTab('calendario')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
                 activeTab === 'calendario'
-                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
+                  ? 'bg-white text-slate-900 border border-slate-200 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
               }`}
             >
               <CalendarIcon className="w-3.5 h-3.5 text-blue-600" />
@@ -469,8 +469,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
               onClick={() => setActiveTab('progresso')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
                 activeTab === 'progresso'
-                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
+                  ? 'bg-white text-slate-900 border border-slate-200 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
               }`}
             >
               <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
@@ -481,8 +481,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
               onClick={() => setActiveTab('lista')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
                 activeTab === 'lista'
-                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
+                  ? 'bg-white text-slate-900 border border-slate-200 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
               }`}
             >
               <List className="w-3.5 h-3.5 text-purple-600" />
@@ -493,8 +493,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
               onClick={() => setActiveTab('relatorio')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
                 activeTab === 'relatorio'
-                  ? 'bg-white text-slate-950 border border-slate-300 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-950 hover:bg-slate-200/70'
+                  ? 'bg-white text-slate-900 border border-slate-200 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
               }`}
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-amber-600" />
@@ -504,19 +504,19 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
 
           <button
             onClick={handleRunAutoLink}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-300 rounded-xl transition-all active:scale-95 cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-all active:scale-95 cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
             title="Percorrer pedidos sem cronograma e vincular automaticamente"
           >
             <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-            <span className="hidden sm:inline">Vincular Automático</span>
+            <span>Vincular Automático</span>
           </button>
 
           <button
             onClick={handleOpenNew}
             disabled={currentUser.role === 'VIEWER'}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-full shadow-xs hover:shadow-md active:scale-95 transition-all cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer whitespace-nowrap shrink-0"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
             <span>Novo Cronograma</span>
           </button>
         </div>

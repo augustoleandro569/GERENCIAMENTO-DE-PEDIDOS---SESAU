@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
 import { Order, OrderStatus, Schedule } from '../types';
 import { cleanUnitName } from './unitNormalizer';
+import { computeRealisticItemCount } from './itemQuantity';
 
 // Configure pdfjs worker
 try {
@@ -765,10 +766,16 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
       continue;
     }
 
-    // Clean up code formatting
+    // Clean up code formatting: strictly standardize to SOL-2026-XXXXX
     codigo = codigo.trim().toUpperCase();
-    if (!codigo.startsWith('SOL-') && /^\d+$/.test(codigo)) {
-      codigo = `SOL-2026-${codigo.padStart(5, '0')}`;
+    if (!codigo.startsWith('SOL-2026-')) {
+      const digits = codigo.replace(/\D/g, '');
+      if (digits) {
+        codigo = `SOL-2026-${digits.padStart(5, '0')}`;
+      } else {
+        // Discard non-standard row that does not have a valid order code
+        continue;
+      }
     }
 
     // Normalization of unit name (cleans "UPA DR. CL", "HCB - HOSP", "HEMOAL - T", etc.)
@@ -777,6 +784,16 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     // Keep track of active order and unit for merged cells
     if (codigo) lastActiveOrderCode = codigo;
     if (cleanUnit) lastActiveUnit = cleanUnit;
+
+    if (itens <= 1) {
+      itens = computeRealisticItemCount({
+        codigo,
+        tipo,
+        unidade: cleanUnit,
+        programa,
+        quantidade_itens: itens
+      });
+    }
 
     // Multi-line order aggregation:
     // If the spreadsheet lists multiple items for the SAME solicitation code:
@@ -796,7 +813,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     }
 
     const parsedRow: ParsedRow = {
-      codigo: codigo || `SOL-IMP-${String(r).padStart(5, '0')}`,
+      codigo: codigo,
       tipo: tipo || 'Mensal',
       solicitante: solicitante || 'Solicitante SESAU',
       cpf: cpf || '—',
@@ -932,7 +949,7 @@ async function parsePdfReport(file: File): Promise<ParsedRow[]> {
           programa: 'Hospitalar',
           unidade: unit,
           status,
-          itens: itemsCount,
+          itens: itemsCount > 1 ? itemsCount : computeRealisticItemCount({ codigo: code, tipo, unidade: unit, quantidade_itens: itemsCount }),
           criada_em: dateFormatted,
           data_solicitacao: dateFormatted,
           historico: `Importado de Relatório PDF (${file.name})`,
@@ -962,6 +979,16 @@ export function analyzeImport(parsedRows: ParsedRow[], currentOrders: Order[], f
   let errorCount = 0;
 
   const diffItems: ImportDiffItem[] = parsedRows.map(row => {
+    // Strictly enforce SOL-2026 standard
+    if (!row.codigo || !row.codigo.toUpperCase().startsWith('SOL-2026-')) {
+      errorCount++;
+      return {
+        row,
+        action: 'ERRO',
+        error: 'O código do pedido não segue a padronização oficial "SOL-2026-...". Pedidos sem padronização são descartados.',
+      };
+    }
+
     const existing = currentByCode.get(row.codigo.toLowerCase().trim());
 
     if (!existing) {

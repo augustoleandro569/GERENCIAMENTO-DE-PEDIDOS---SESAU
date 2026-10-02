@@ -53,6 +53,30 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     return;
   }
 
+  const isQuotaExceeded =
+    errMessage.includes('Quota limit exceeded') ||
+    errMessage.includes('Quota exceeded') ||
+    errMessage.includes('quota metric') ||
+    (error as any)?.code === 'resource-exhausted';
+
+  if (isQuotaExceeded) {
+    console.warn(`[Firestore Quota Notice] Free daily read units quota reached on ${operationType} at ${path || 'database'}: ${errMessage}`);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('gp_firestore_quota_exceeded_day', new Date().toISOString().slice(0, 10));
+      } catch (_) {}
+      window.dispatchEvent(new CustomEvent('firestore-quota-exceeded', {
+        detail: {
+          error: errMessage,
+          operationType,
+          path,
+          upgradeUrl: `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`
+        }
+      }));
+    }
+    return;
+  }
+
   const errInfo: FirestoreErrorInfo = {
     error: errMessage,
     authInfo: {
@@ -69,6 +93,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
+
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
@@ -80,8 +105,8 @@ export async function testFirestoreConnection(): Promise<boolean> {
     return true;
   } catch (error: any) {
     const msg = error?.message || String(error);
-    if (msg.includes('client is offline') || msg.includes('unavailable') || error?.code === 'unavailable') {
-      console.warn('Firestore operating in offline / reconnecting mode.');
+    if (msg.includes('client is offline') || msg.includes('unavailable') || msg.includes('quota') || msg.includes('Quota') || error?.code === 'unavailable') {
+      console.warn('Firestore operating in offline / quota limit mode.');
       return false;
     }
     return false;
