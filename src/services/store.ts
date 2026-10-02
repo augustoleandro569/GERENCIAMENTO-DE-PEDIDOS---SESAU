@@ -974,7 +974,7 @@ class AppStore {
     dateFormatted: string;
   }> {
     let day = 0;
-    let month = monthNumber || 9;
+    let month = monthNumber || (new Date().getMonth() + 1);
 
     if (typeof dayOrDate === 'string') {
       const clean = dayOrDate.trim();

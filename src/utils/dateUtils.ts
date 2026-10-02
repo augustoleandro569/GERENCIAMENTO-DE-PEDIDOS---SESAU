@@ -71,7 +71,7 @@ export function calculateDeadlineSituation(
         return { situation: 'Concluído no prazo', label: 'Concluído', delayDays: 0, targetDate: order.data_prevista_entrega };
       }
       if (targetDelivery) {
-        const now = new Date('2026-09-24T14:15:00');
+        const now = new Date();
         const diffMs = targetDelivery.getTime() - now.getTime();
         if (diffMs < 0) {
           const days = Math.max(1, Math.floor(Math.abs(diffMs) / (1000 * 60 * 60 * 24)));
@@ -91,7 +91,7 @@ export function calculateDeadlineSituation(
     return { situation: 'Fora do cronograma', label: 'Sem Cronograma', delayDays: 0, targetDate: '—' };
   }
 
-  const now = new Date('2026-09-24T14:15:00'); // Consistent system reference time or real new Date()
+  const now = new Date();
   
   // Delivered status check
   if (isDelivered || isPartiallyDelivered) {

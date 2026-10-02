@@ -77,8 +77,22 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
     unlinkOrder 
   } = useStore();
 
-  const [currentMonth, setCurrentMonth] = useState<number>(9); // 9 = SET/26, 10 = OUT/26
-  const [selectedDay, setSelectedDay] = useState<number | null>(24);
+  // Dynamic reference to today's date (e.g. 02/10/2026)
+  const todayRef = useMemo(() => {
+    const d = new Date();
+    return {
+      year: d.getFullYear(),
+      month: d.getMonth() + 1, // 1-12 (10 for Outubro)
+      day: d.getDate(), // 1-31 (02)
+      formatted: `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`
+    };
+  }, []);
+
+  const defaultMonth = todayRef.month === 9 || todayRef.month === 10 ? todayRef.month : 10;
+  const defaultDay = todayRef.month === defaultMonth ? todayRef.day : 1;
+
+  const [currentMonth, setCurrentMonth] = useState<number>(defaultMonth);
+  const [selectedDay, setSelectedDay] = useState<number | null>(defaultDay);
   const [selectedStages, setSelectedStages] = useState<string[]>(selectedStagesProp || []);
   const [selectedOrderTypes, setSelectedOrderTypes] = useState<string[]>(
     selectedOrderTypesProp && selectedOrderTypesProp.length > 0
@@ -293,7 +307,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
 
   // Quick reschedule helper for orders on the selected day
   const handleShiftOrderDate = (order: Order, deltaDays: number) => {
-    const curDay = selectedDay || 24;
+    const curDay = selectedDay || todayRef.day;
     const targetDay = Math.min(totalDaysInMonth, Math.max(1, curDay + deltaDays));
     const targetDateStr = `2026-${monthStr}-${String(targetDay).padStart(2, '0')}`;
     updateOrder(order.id, { data_prevista_entrega: targetDateStr }, currentUser, `Reagendado para dia ${targetDay}`);
@@ -342,7 +356,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-300 text-xs font-semibold shadow-2xs">
             <button
-              onClick={() => { setCurrentMonth(9); setSelectedDay(24); }}
+              onClick={() => { setCurrentMonth(9); setSelectedDay(todayRef.month === 9 ? todayRef.day : 1); }}
               className={`px-3.5 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
                 currentMonth === 9
                   ? 'bg-white text-blue-900 border border-slate-300 shadow-xs'
@@ -352,7 +366,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
               Setembro 2026 (SET/26)
             </button>
             <button
-              onClick={() => { setCurrentMonth(10); setSelectedDay(1); }}
+              onClick={() => { setCurrentMonth(10); setSelectedDay(todayRef.month === 10 ? todayRef.day : 1); }}
               className={`px-3.5 py-1.5 rounded-lg transition-all cursor-pointer font-bold ${
                 currentMonth === 10
                   ? 'bg-white text-blue-900 border border-slate-300 shadow-xs'
@@ -363,14 +377,23 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
             </button>
           </div>
 
-          {currentMonth === 9 && (
-            <button
-              onClick={() => setSelectedDay(24)}
-              className="px-3.5 py-1.5 text-xs font-bold text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-xl border border-blue-300 transition-all cursor-pointer shadow-2xs"
-            >
-              Ir para Hoje (24/09)
-            </button>
-          )}
+          <button
+            onClick={() => {
+              if (todayRef.month === 9 || todayRef.month === 10) {
+                setCurrentMonth(todayRef.month);
+              }
+              setSelectedDay(todayRef.day);
+            }}
+            className={`px-3.5 py-1.5 text-xs font-bold rounded-xl border transition-all cursor-pointer shadow-2xs flex items-center gap-1.5 ${
+              currentMonth === todayRef.month && selectedDay === todayRef.day
+                ? 'text-blue-950 bg-blue-100 border-blue-400 font-extrabold ring-1 ring-blue-300'
+                : 'text-blue-800 bg-blue-50 hover:bg-blue-100 border-blue-300'
+            }`}
+            title="Navegar diretamente para a data de hoje"
+          >
+            <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+            Ir para Hoje ({todayRef.formatted})
+          </button>
         </div>
 
         {/* Multi-Select Filters */}
@@ -458,7 +481,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
               };
 
               const isSelected = selectedDay === day;
-              const isToday = currentMonth === 9 && day === 24;
+              const isToday = currentMonth === todayRef.month && day === todayRef.day;
 
               const hasEntregas = data.entregas.length > 0 && isStageActive('ENTREGA');
               const hasSep = data.separacoes.length > 0 && isStageActive('SEPARACAO');
@@ -579,7 +602,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                     <CalendarCheck className="w-4 h-4" />
                   </div>
                   <h3 className="text-xs font-bold text-slate-900 tracking-tight">
-                    Dia {selectedDay || 24}/{monthStr}/2026
+                    Dia {selectedDay || todayRef.day}/{monthStr}/2026
                   </h3>
                 </div>
                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${
@@ -594,7 +617,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
               {/* Day Jumper Buttons: Anterior & Próximo */}
               <div className="flex items-center justify-between gap-1 pt-1">
                 <button
-                  onClick={() => setSelectedDay(prev => Math.max(1, (prev || 24) - 1))}
+                  onClick={() => setSelectedDay(prev => Math.max(1, (prev || todayRef.day) - 1))}
                   className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 bg-slate-100/80 hover:bg-slate-200/70 rounded-full transition-all cursor-pointer"
                 >
                   <ChevronLeft className="w-3 h-3" />
@@ -602,7 +625,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setSelectedDay(prev => Math.min(totalDaysInMonth, (prev || 24) + 1))}
+                  onClick={() => setSelectedDay(prev => Math.min(totalDaysInMonth, (prev || todayRef.day) + 1))}
                   className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 bg-slate-100/80 hover:bg-slate-200/70 rounded-full transition-all cursor-pointer"
                 >
                   <span>Próximo Dia</span>
@@ -908,7 +931,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       <DayOrdersModal
         isOpen={isDayOrdersModalOpen}
         onClose={() => setIsDayOrdersModalOpen(false)}
-        dayNumber={selectedDay || 24}
+        dayNumber={selectedDay || todayRef.day}
         monthNumber={currentMonth}
         onNavigateDay={(newDay) => setSelectedDay(newDay)}
         onSelectOrder={onSelectOrder}

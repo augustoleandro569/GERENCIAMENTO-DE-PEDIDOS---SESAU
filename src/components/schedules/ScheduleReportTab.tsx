@@ -161,11 +161,17 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
       setStartDate('2026-10-01');
       setEndDate('2026-10-31');
     } else if (preset === 'ULTIMOS_7') {
-      setStartDate('2026-09-18');
-      setEndDate('2026-09-24');
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 7);
+      setStartDate(start.toISOString().split('T')[0]);
+      setEndDate(end.toISOString().split('T')[0]);
     } else if (preset === 'ULTIMOS_15') {
-      setStartDate('2026-09-10');
-      setEndDate('2026-09-25');
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 15);
+      setStartDate(start.toISOString().split('T')[0]);
+      setEndDate(end.toISOString().split('T')[0]);
     } else if (preset === 'TODO_CICLO') {
       setStartDate('2026-09-01');
       setEndDate('2026-10-31');

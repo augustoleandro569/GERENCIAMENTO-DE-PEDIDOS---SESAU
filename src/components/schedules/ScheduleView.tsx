@@ -148,7 +148,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
 
   // Progress & SLA Calculations for each schedule
   const scheduleProgressList = useMemo(() => {
-    const now = new Date('2026-09-24T14:15:00');
+    const now = new Date();
 
     return schedules.map(sch => {
       const linkedOrders = orders.filter(o => o.cronograma_id === sch.id);
