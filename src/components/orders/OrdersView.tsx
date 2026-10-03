@@ -5,12 +5,10 @@ import { calculateDeadlineSituation, formatDate, formatShortDate } from '../../u
 import { StatusBadge, TypeTag, DeadlineBadge, PriorityBadge, InlineStatusSelect, ALL_STATUSES } from '../common/StatusBadge';
 import { showToast } from '../common/Toast';
 import { exportOrdersToSpreadsheet } from '../../utils/spreadsheet';
-import { UnifiedCalendar } from '../schedules/UnifiedCalendar';
 import { MultiSelect } from '../common/MultiSelect';
 import { 
   Table, 
   Kanban, 
-  Calendar as CalendarIcon, 
   Download, 
   Search, 
   Plus, 
@@ -54,14 +52,37 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const { orders, schedules, units, programs, orderTypes, currentUser, updateOperationalStatus, settings } = useStore();
 
   // View mode
-  const [viewMode, setViewMode] = useState<'tabela' | 'kanban' | 'calendario'>('tabela');
+  const [viewMode, setViewMode] = useState<'tabela' | 'kanban'>('tabela');
 
   // Search & Multi-Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUnits, setSelectedUnits] = useState<string[]>(initialFilter?.unidade ? [initialFilter.unidade] : []);
   const [selectedPrograms, setSelectedPrograms] = useState<string[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<string[]>(initialFilter?.tipo ? [initialFilter.tipo] : []);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(initialFilter?.status ? [initialFilter.status] : []);
   const [selectedQuickFilters, setSelectedQuickFilters] = useState<string[]>([]);
+
+  // Synchronize when initialFilter changes from parent
+  React.useEffect(() => {
+    if (initialFilter?.status) {
+      setSelectedStatuses([initialFilter.status]);
+      setCurrentPage(1);
+    }
+  }, [initialFilter?.status]);
+
+  React.useEffect(() => {
+    if (initialFilter?.unidade) {
+      setSelectedUnits([initialFilter.unidade]);
+      setCurrentPage(1);
+    }
+  }, [initialFilter?.unidade]);
+
+  React.useEffect(() => {
+    if (initialFilter?.tipo) {
+      setSelectedTypes([initialFilter.tipo]);
+      setCurrentPage(1);
+    }
+  }, [initialFilter?.tipo]);
 
   // Sorting
   const [sortField, setSortField] = useState<SortField>('criado_em');
@@ -77,63 +98,91 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     return map;
   }, [schedules]);
 
-  // Dynamic counts for quick filter chips
-  const quickFilterCounts = useMemo(() => {
-    let noPrazo = 0;
-    let foraDoPrazo = 0;
-    let aguardando = 0;
-    let separacao = 0;
-    let transporte = 0;
-    let entregue = 0;
-    let emergencial = 0;
-    let atrasado = 0;
+  // ALL 14 OPERATIONAL STATUSES - COMPLETE SEPARATION, NO UNIFICATION (Não unifique!)
+  const ALL_OPERATIONAL_STATUSES = useMemo(() => [
+    { status: 'Rascunho' as OrderStatus, label: 'Rascunho', dotColor: 'bg-slate-400', badgeBg: 'bg-slate-50', badgeText: 'text-slate-700', borderColor: 'border-slate-300' },
+    { status: 'Aguardando Validação' as OrderStatus, label: 'Aguardando Validação', dotColor: 'bg-amber-400', badgeBg: 'bg-amber-50', badgeText: 'text-amber-800', borderColor: 'border-amber-300' },
+    { status: 'Aguardando Aprovação' as OrderStatus, label: 'Aguardando Aprovação', dotColor: 'bg-amber-500', badgeBg: 'bg-amber-50', badgeText: 'text-amber-900', borderColor: 'border-amber-400' },
+    { status: 'Aprovada' as OrderStatus, label: 'Aprovados', dotColor: 'bg-blue-500', badgeBg: 'bg-blue-50', badgeText: 'text-blue-800', borderColor: 'border-blue-300' },
+    { status: 'Aguardando Separação' as OrderStatus, label: 'Aguardando Separação', dotColor: 'bg-indigo-500', badgeBg: 'bg-indigo-50', badgeText: 'text-indigo-800', borderColor: 'border-indigo-300' },
+    { status: 'Em Separação' as OrderStatus, label: 'Em Separação', dotColor: 'bg-purple-500', badgeBg: 'bg-purple-50', badgeText: 'text-purple-800', borderColor: 'border-purple-300' },
+    { status: 'Aguardando Conferência' as OrderStatus, label: 'Aguardando Conferência', dotColor: 'bg-violet-500', badgeBg: 'bg-violet-50', badgeText: 'text-violet-800', borderColor: 'border-violet-300' },
+    { status: 'Em Conferência' as OrderStatus, label: 'Em Conferência', dotColor: 'bg-teal-500', badgeBg: 'bg-teal-50', badgeText: 'text-teal-800', borderColor: 'border-teal-300' },
+    { status: 'Expedida' as OrderStatus, label: 'Expedida', dotColor: 'bg-cyan-500', badgeBg: 'bg-cyan-50', badgeText: 'text-cyan-800', borderColor: 'border-cyan-300' },
+    { status: 'Em Transporte' as OrderStatus, label: 'Em Transporte', dotColor: 'bg-orange-500', badgeBg: 'bg-orange-50', badgeText: 'text-orange-800', borderColor: 'border-orange-300' },
+    { status: 'Entregue Parcialmente' as OrderStatus, label: 'Entrega Parcial', dotColor: 'bg-lime-500', badgeBg: 'bg-lime-50', badgeText: 'text-lime-800', borderColor: 'border-lime-300' },
+    { status: 'Entregue' as OrderStatus, label: 'Entregue', dotColor: 'bg-emerald-500', badgeBg: 'bg-emerald-50', badgeText: 'text-emerald-800', borderColor: 'border-emerald-300' },
+    { status: 'Rejeitada' as OrderStatus, label: 'Rejeitada', dotColor: 'bg-rose-500', badgeBg: 'bg-rose-50', badgeText: 'text-rose-800', borderColor: 'border-rose-300' },
+    { status: 'Cancelada' as OrderStatus, label: 'Cancelada', dotColor: 'bg-neutral-500', badgeBg: 'bg-neutral-100', badgeText: 'text-neutral-700', borderColor: 'border-neutral-300' },
+  ], []);
+
+  // Individual non-unified counts for every state
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    ALL_OPERATIONAL_STATUSES.forEach(s => {
+      counts[s.status] = 0;
+    });
 
     orders.forEach(o => {
-      if (o.status_operacional === 'Aguardando Aprovação' || o.status_operacional === 'Aguardando Validação' || o.status_operacional === 'Rascunho') aguardando++;
-      if (o.status_operacional === 'Em Separação' || o.status_operacional === 'Aguardando Separação') separacao++;
-      if (o.status_operacional === 'Em Transporte' || o.status_operacional === 'Expedida') transporte++;
-      if (o.status_operacional === 'Entregue' || o.status_operacional === 'Entregue Parcialmente') entregue++;
+      const st = o.status_operacional;
+      if (st === 'Aprovado') {
+        counts['Aprovada'] = (counts['Aprovada'] || 0) + 1;
+      } else if (st === 'Cancelado') {
+        counts['Cancelada'] = (counts['Cancelada'] || 0) + 1;
+      } else if (counts[st] !== undefined) {
+        counts[st]++;
+      } else {
+        counts[st] = 1;
+      }
+    });
+
+    return counts;
+  }, [orders, ALL_OPERATIONAL_STATUSES]);
+
+  // SLA & urgency counts
+  const slaCounts = useMemo(() => {
+    let noPrazo = 0;
+    let foraDoPrazo = 0;
+    let emergencial = 0;
+
+    orders.forEach(o => {
       if (o.tipo === 'Emergencial' || o.tipo === 'Falta') emergencial++;
 
       const sch = o.cronograma_id ? schedulesMap.get(o.cronograma_id) : null;
       const { situation } = calculateDeadlineSituation(o, sch, settings.horas_alerta_atencao);
       if (situation === 'Dentro do prazo' || situation === 'Concluído no prazo') noPrazo++;
       if (situation === 'Atrasado' || situation === 'Concluído com atraso') foraDoPrazo++;
-      if (situation === 'Atrasado') atrasado++;
     });
 
     return {
       todos: orders.length,
       noPrazo,
       foraDoPrazo,
-      aguardando,
-      separacao,
-      transporte,
-      entregue,
       emergencial,
-      atrasado,
     };
   }, [orders, schedulesMap, settings.horas_alerta_atencao]);
 
-  // Filtered orders with Multi-Select support
+  // Filtered orders with Multi-Select support & Non-Unified Statuses
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
       const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
       const { situation } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
 
-      // Multi-quick-filter check: order must match at least one selected chip if any are selected
+      // Multi-quick-filter check: exact non-unified match
       if (selectedQuickFilters.length > 0) {
         const matchesAnyQuickFilter = selectedQuickFilters.some(qf => {
           if (qf === 'NO_PRAZO') return situation === 'Dentro do prazo' || situation === 'Concluído no prazo';
           if (qf === 'FORA_DO_PRAZO') return situation === 'Atrasado' || situation === 'Concluído com atraso';
           if (qf === 'EMERGENCIAL') return order.tipo === 'Emergencial' || order.tipo === 'Falta';
-          if (qf === 'ATRASADO') return situation === 'Atrasado';
-
-          if (viewMode !== 'kanban') {
-            if (qf === 'AGUARDANDO') return order.status_operacional === 'Aguardando Aprovação' || order.status_operacional === 'Aguardando Validação' || order.status_operacional === 'Rascunho';
-            if (qf === 'SEPARACAO') return order.status_operacional === 'Em Separação' || order.status_operacional === 'Aguardando Separação';
-            if (qf === 'TRANSPORTE') return order.status_operacional === 'Em Transporte' || order.status_operacional === 'Expedida';
-            if (qf === 'ENTREGUE') return order.status_operacional === 'Entregue' || order.status_operacional === 'Entregue Parcialmente';
+          if (qf.startsWith('STATUS:')) {
+            const targetStatus = qf.replace('STATUS:', '');
+            if (targetStatus === 'Aprovada') {
+              return order.status_operacional === 'Aprovada' || order.status_operacional === 'Aprovado';
+            }
+            if (targetStatus === 'Cancelada') {
+              return order.status_operacional === 'Cancelada' || order.status_operacional === 'Cancelado';
+            }
+            return order.status_operacional === targetStatus;
           }
           return false;
         });
@@ -160,9 +209,19 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       // Multi-select Types
       if (selectedTypes.length > 0 && !selectedTypes.includes(order.tipo)) return false;
 
+      // Multi-select Statuses: support both exact and gender aliases (Aprovada/Aprovado, Cancelada/Cancelado)
+      if (selectedStatuses.length > 0) {
+        const matchesStatus = selectedStatuses.some(st => {
+          if (st === 'Aprovada') return order.status_operacional === 'Aprovada' || order.status_operacional === 'Aprovado';
+          if (st === 'Cancelada') return order.status_operacional === 'Cancelada' || order.status_operacional === 'Cancelado';
+          return order.status_operacional === st;
+        });
+        if (!matchesStatus) return false;
+      }
+
       return true;
     });
-  }, [orders, selectedQuickFilters, searchTerm, selectedUnits, selectedPrograms, selectedTypes, schedulesMap, settings.horas_alerta_atencao, viewMode]);
+  }, [orders, selectedQuickFilters, searchTerm, selectedUnits, selectedPrograms, selectedTypes, selectedStatuses, schedulesMap, settings.horas_alerta_atencao]);
 
   // Sorted orders
   const sortedOrders = useMemo(() => {
@@ -233,6 +292,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     setSelectedUnits([]);
     setSelectedPrograms([]);
     setSelectedTypes([]);
+    setSelectedStatuses([]);
     setSelectedQuickFilters([]);
     setCurrentPage(1);
   };
@@ -259,25 +319,58 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
   const kanbanPipeline: KanbanColumnConfig[] = [
     {
-      id: 'col-aguardando',
-      title: 'Aguardando Aprovação / Validação',
-      statuses: ['Aguardando Aprovação', 'Aguardando Validação', 'Rascunho'],
-      advanceTo: 'Aguardando Separação',
+      id: 'col-rascunho',
+      title: 'Rascunho',
+      statuses: ['Rascunho'],
+      advanceTo: 'Aguardando Validação',
+      headerBorder: 'border-slate-300',
+      badgeBg: 'bg-slate-100 border-slate-300',
+      badgeText: 'text-slate-800',
+      dotColor: 'bg-slate-500',
+    },
+    {
+      id: 'col-validacao',
+      title: 'Aguardando Validação',
+      statuses: ['Aguardando Validação'],
+      advanceTo: 'Aguardando Aprovação',
+      retroactTo: 'Rascunho',
       headerBorder: 'border-amber-300',
       badgeBg: 'bg-amber-100 border-amber-300',
       badgeText: 'text-amber-800',
+      dotColor: 'bg-amber-400',
+    },
+    {
+      id: 'col-aprovacao',
+      title: 'Aguardando Aprovação',
+      statuses: ['Aguardando Aprovação'],
+      advanceTo: 'Aprovada',
+      retroactTo: 'Aguardando Validação',
+      headerBorder: 'border-amber-400',
+      badgeBg: 'bg-amber-100 border-amber-400',
+      badgeText: 'text-amber-900',
       dotColor: 'bg-amber-500',
     },
     {
       id: 'col-aprovada',
-      title: 'Aguardando Separação',
-      statuses: ['Aguardando Separação', 'Aprovada', 'Aprovado'],
-      advanceTo: 'Em Separação',
+      title: 'Aprovados',
+      statuses: ['Aprovada', 'Aprovado'],
+      advanceTo: 'Aguardando Separação',
       retroactTo: 'Aguardando Aprovação',
-      headerBorder: 'border-purple-300',
-      badgeBg: 'bg-purple-100 border-purple-300',
-      badgeText: 'text-purple-800',
-      dotColor: 'bg-purple-500',
+      headerBorder: 'border-blue-300',
+      badgeBg: 'bg-blue-100 border-blue-300',
+      badgeText: 'text-blue-800',
+      dotColor: 'bg-blue-500',
+    },
+    {
+      id: 'col-aguardando-separacao',
+      title: 'Aguardando Separação',
+      statuses: ['Aguardando Separação'],
+      advanceTo: 'Em Separação',
+      retroactTo: 'Aprovada',
+      headerBorder: 'border-indigo-300',
+      badgeBg: 'bg-indigo-100 border-indigo-300',
+      badgeText: 'text-indigo-800',
+      dotColor: 'bg-indigo-500',
     },
     {
       id: 'col-separacao',
@@ -285,10 +378,10 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       statuses: ['Em Separação'],
       advanceTo: 'Aguardando Conferência',
       retroactTo: 'Aguardando Separação',
-      headerBorder: 'border-indigo-300',
-      badgeBg: 'bg-indigo-100 border-indigo-300',
-      badgeText: 'text-indigo-800',
-      dotColor: 'bg-indigo-500',
+      headerBorder: 'border-purple-300',
+      badgeBg: 'bg-purple-100 border-purple-300',
+      badgeText: 'text-purple-800',
+      dotColor: 'bg-purple-500',
     },
     {
       id: 'col-aguardando-conf',
@@ -335,9 +428,20 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       dotColor: 'bg-orange-500',
     },
     {
+      id: 'col-parcial',
+      title: 'Entrega Parcial',
+      statuses: ['Entregue Parcialmente'],
+      advanceTo: 'Entregue',
+      retroactTo: 'Em Transporte',
+      headerBorder: 'border-lime-300',
+      badgeBg: 'bg-lime-100 border-lime-300',
+      badgeText: 'text-lime-800',
+      dotColor: 'bg-lime-500',
+    },
+    {
       id: 'col-entregue',
       title: 'Entregue',
-      statuses: ['Entregue', 'Entregue Parcialmente'],
+      statuses: ['Entregue'],
       retroactTo: 'Em Transporte',
       headerBorder: 'border-emerald-300',
       badgeBg: 'bg-emerald-100 border-emerald-300',
@@ -345,23 +449,33 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       dotColor: 'bg-emerald-500',
     },
     {
-      id: 'col-cancelada',
-      title: 'Cancelada / Rejeitada',
-      statuses: ['Rejeitada', 'Cancelada', 'Cancelado'],
-      retroactTo: 'Aguardando Aprovação',
+      id: 'col-rejeitada',
+      title: 'Rejeitada',
+      statuses: ['Rejeitada'],
+      retroactTo: 'Aguardando Validação',
       headerBorder: 'border-rose-300',
       badgeBg: 'bg-rose-100 border-rose-300',
       badgeText: 'text-rose-800',
       dotColor: 'bg-rose-500',
     },
+    {
+      id: 'col-cancelada',
+      title: 'Cancelada',
+      statuses: ['Cancelada', 'Cancelado'],
+      retroactTo: 'Rascunho',
+      headerBorder: 'border-red-400',
+      badgeBg: 'bg-red-100 border-red-300',
+      badgeText: 'text-red-900',
+      dotColor: 'bg-red-700',
+    },
   ];
 
   return (
     <div className="space-y-4">
-      {/* Consolidated Top Control & Filtering Center */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden divide-y divide-slate-100">
+      {/* Consolidated Top Control & Filtering Center - relative z-30 and overflow-visible so dropdowns overlay the table */}
+      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs relative z-30 divide-y divide-slate-100">
         {/* Tier 1: View Header, Mode Switcher & Export */}
-        <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white">
+        <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white rounded-t-2xl">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-700 via-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
               <Zap className="w-5 h-5" />
@@ -384,7 +498,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0 self-start md:self-auto">
-            {/* Segmented View Switcher */}
+            {/* Segmented View Switcher: Tabela & Kanban */}
             <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 text-xs shadow-2xs">
               <button
                 onClick={() => setViewMode('tabela')}
@@ -407,17 +521,6 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
               >
                 <Kanban className="w-3.5 h-3.5 text-purple-600 shrink-0" />
                 <span>Kanban</span>
-              </button>
-              <button
-                onClick={() => setViewMode('calendario')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer font-bold whitespace-nowrap ${
-                  viewMode === 'calendario'
-                    ? 'bg-white text-slate-900 border border-slate-200 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
-                }`}
-              >
-                <CalendarIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>Calendário</span>
               </button>
             </div>
 
@@ -444,8 +547,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           </div>
         </div>
 
-        {/* Tier 2: Search Input & Multi-Select Dropdowns */}
-        <div className="p-3.5 bg-slate-50/50 flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3">
+        {/* Tier 2: Search Input & Multi-Select Dropdowns - relative z-30 and overflow-visible */}
+        <div className="p-3.5 bg-slate-50/50 flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 relative z-30 overflow-visible">
           <div className="relative flex-1 min-w-[200px]">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
@@ -465,7 +568,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto">
+          <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto relative z-30">
             {/* Multi-Select Unidades */}
             <MultiSelect
               options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
@@ -474,6 +577,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
               placeholder="Todas as Unidades"
               className="flex-1 sm:flex-initial sm:w-48"
               showSearch={true}
+              align="left"
             />
 
             {/* Multi-Select Programas */}
@@ -483,6 +587,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
               onChange={(next) => { setSelectedPrograms(next); setCurrentPage(1); }}
               placeholder="Todos os Programas"
               className="flex-1 sm:flex-initial sm:w-44"
+              align="left"
             />
 
             {/* Multi-Select Tipos */}
@@ -492,9 +597,24 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
               onChange={(next) => { setSelectedTypes(next); setCurrentPage(1); }}
               placeholder="Todos os Tipos"
               className="flex-1 sm:flex-initial sm:w-40"
+              align="right"
             />
 
-            {(selectedUnits.length > 0 || selectedPrograms.length > 0 || selectedTypes.length > 0 || selectedQuickFilters.length > 0 || searchTerm) && (
+            {/* Multi-Select Status Operacional: All 14 states */}
+            <MultiSelect
+              options={ALL_OPERATIONAL_STATUSES.map(s => ({
+                id: s.status,
+                label: s.label,
+                count: statusCounts[s.status] || 0,
+              }))}
+              selected={selectedStatuses}
+              onChange={(next) => { setSelectedStatuses(next); setCurrentPage(1); }}
+              placeholder="Todos os Status"
+              className="flex-1 sm:flex-initial sm:w-48"
+              align="right"
+            />
+
+            {(selectedUnits.length > 0 || selectedPrograms.length > 0 || selectedTypes.length > 0 || selectedStatuses.length > 0 || selectedQuickFilters.length > 0 || searchTerm) && (
               <button
                 onClick={handleClearFilters}
                 className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs whitespace-nowrap shrink-0"
@@ -507,12 +627,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           </div>
         </div>
 
-        {/* Tier 3: Directed Status & SLA Filter Ribbon */}
-        <div className="px-4 py-2.5 bg-white flex items-center gap-2 overflow-x-auto text-xs scrollbar-none">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 shrink-0 mr-1 hidden sm:inline">
-            Status & SLA:
-          </span>
-
+        {/* Tier 3: Directed Status Ribbon with ALL 14 states divided individually (Não unifique!) */}
+        <div className="px-4 py-2.5 bg-white flex items-center gap-2 overflow-x-auto text-xs scrollbar-thin rounded-b-2xl">
           <button
             onClick={() => { setSelectedQuickFilters([]); setCurrentPage(1); }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap shrink-0 text-xs ${
@@ -525,50 +641,108 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
               selectedQuickFilters.length === 0 ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
             }`}>
-              {quickFilterCounts.todos}
+              {slaCounts.todos}
             </span>
           </button>
 
-          {[
-            { id: 'NO_PRAZO', label: '🟢 No Prazo', count: quickFilterCounts.noPrazo },
-            { id: 'FORA_DO_PRAZO', label: '🔴 Fora do Prazo', count: quickFilterCounts.foraDoPrazo, isAlert: true },
-            { id: 'AGUARDANDO', label: 'Aguardando Aprovação', count: quickFilterCounts.aguardando },
-            { id: 'SEPARACAO', label: 'Em Separação', count: quickFilterCounts.separacao },
-            { id: 'TRANSPORTE', label: 'Em Transporte', count: quickFilterCounts.transporte },
-            { id: 'ENTREGUE', label: 'Entregues', count: quickFilterCounts.entregue },
-            { id: 'EMERGENCIAL', label: 'Emergenciais / Falta', count: quickFilterCounts.emergencial, isUrgent: true },
-          ].map(chip => {
-            const isSelected = selectedQuickFilters.includes(chip.id);
-            const handleToggleChip = () => {
+          {/* SLA Filters */}
+          <button
+            onClick={() => {
+              setSelectedQuickFilters(prev => prev.includes('NO_PRAZO') ? prev.filter(c => c !== 'NO_PRAZO') : [...prev, 'NO_PRAZO']);
+              setCurrentPage(1);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap shrink-0 text-xs ${
+              selectedQuickFilters.includes('NO_PRAZO')
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900'
+            }`}
+          >
+            <span>🟢 No Prazo</span>
+            <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+              selectedQuickFilters.includes('NO_PRAZO') ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+            }`}>
+              {slaCounts.noPrazo}
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              setSelectedQuickFilters(prev => prev.includes('FORA_DO_PRAZO') ? prev.filter(c => c !== 'FORA_DO_PRAZO') : [...prev, 'FORA_DO_PRAZO']);
+              setCurrentPage(1);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap shrink-0 text-xs ${
+              selectedQuickFilters.includes('FORA_DO_PRAZO')
+                ? 'bg-rose-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900'
+            }`}
+          >
+            <AlertCircle className={`w-3.5 h-3.5 ${selectedQuickFilters.includes('FORA_DO_PRAZO') ? 'text-white' : 'text-red-500'}`} />
+            <span>Fora do Prazo</span>
+            <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+              selectedQuickFilters.includes('FORA_DO_PRAZO') ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+            }`}>
+              {slaCounts.foraDoPrazo}
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              setSelectedQuickFilters(prev => prev.includes('EMERGENCIAL') ? prev.filter(c => c !== 'EMERGENCIAL') : [...prev, 'EMERGENCIAL']);
+              setCurrentPage(1);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap shrink-0 text-xs ${
+              selectedQuickFilters.includes('EMERGENCIAL')
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping mr-0.5" />
+            <span>Emergenciais / Falta</span>
+            <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+              selectedQuickFilters.includes('EMERGENCIAL') ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+            }`}>
+              {slaCounts.emergencial}
+            </span>
+          </button>
+
+          <div className="h-4 w-px bg-slate-200 shrink-0 mx-1" />
+
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
+            Estados:
+          </span>
+
+          {/* ALL 14 OPERATIONAL STATUSES - EACH ONE INDIVIDUALLY (NÃO UNIFIQUE!) */}
+          {ALL_OPERATIONAL_STATUSES.map(item => {
+            const chipId = `STATUS:${item.status}`;
+            const isSelected = selectedQuickFilters.includes(chipId);
+            const count = statusCounts[item.status] || 0;
+
+            const handleToggle = () => {
               if (isSelected) {
-                setSelectedQuickFilters(prev => prev.filter(c => c !== chip.id));
+                setSelectedQuickFilters(prev => prev.filter(c => c !== chipId));
               } else {
-                setSelectedQuickFilters(prev => [...prev, chip.id]);
+                setSelectedQuickFilters(prev => [...prev, chipId]);
               }
               setCurrentPage(1);
             };
 
             return (
               <button
-                key={chip.id}
-                onClick={handleToggleChip}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap shrink-0 text-xs ${
+                key={item.status}
+                onClick={handleToggle}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap shrink-0 text-xs border ${
                   isSelected
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900'
+                    ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
+                    : 'bg-white text-slate-700 hover:bg-slate-100 border-slate-200/90'
                 }`}
+                title={`Filtrar somente pedidos com status: ${item.label}`}
               >
-                {chip.isUrgent && (
-                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping mr-0.5" />
-                )}
-                {chip.isAlert && (
-                  <AlertCircle className={`w-3.5 h-3.5 ${isSelected ? 'text-white' : 'text-red-500'}`} />
-                )}
-                <span>{chip.label}</span>
+                <span className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? 'bg-white' : item.dotColor}`} />
+                <span>{item.label}</span>
                 <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                  isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+                  isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
                 }`}>
-                  {chip.count}
+                  {count}
                 </span>
               </button>
             );
@@ -576,9 +750,9 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         </div>
       </div>
 
-      {/* VIEW 1: REFINED INTERACTIVE TABELA */}
+      {/* VIEW 1: REFINED INTERACTIVE TABELA - relative z-10 so filters above overlay it */}
       {viewMode === 'tabela' && (
-        <div className="bg-white rounded-2xl border border-slate-200/80 overflow-hidden shadow-xs">
+        <div className="bg-white rounded-2xl border border-slate-200/80 overflow-hidden shadow-xs relative z-10">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50/80 border-b border-slate-200/80 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
@@ -843,7 +1017,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       {/* VIEW 2: KANBAN - Rounded Columns and Cards with Advance, Retroact and Drag-and-Drop */}
       {viewMode === 'kanban' && (
         <div className="overflow-x-auto pb-4">
-          <div className="flex gap-4 min-w-[1600px]">
+          <div className="flex gap-4 min-w-[4200px]">
             {kanbanPipeline.map((col) => {
               const colOrders = sortedOrders.filter(o => col.statuses.includes(o.status_operacional));
               const isDragOver = dragOverColId === col.id;
@@ -1049,17 +1223,6 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             })}
           </div>
         </div>
-      )}
-
-      {/* VIEW 3: CALENDÁRIO UNIFICADO */}
-      {viewMode === 'calendario' && (
-        <UnifiedCalendar 
-          onSelectOrder={onSelectOrder} 
-          ordersProp={filteredOrders}
-          selectedUnitsProp={selectedUnits}
-          selectedOrderTypesProp={selectedTypes}
-          searchTermProp={searchTerm}
-        />
       )}
     </div>
   );

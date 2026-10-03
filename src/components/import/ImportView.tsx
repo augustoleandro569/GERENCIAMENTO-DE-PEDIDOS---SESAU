@@ -35,11 +35,9 @@ import {
   ChevronsRight,
   Info,
   Zap,
-  RotateCcw,
-  Database
+  RotateCcw
 } from 'lucide-react';
 import { ClearDatabaseModal } from '../common/ClearDatabaseModal';
-import { SupabaseSqlModal } from '../common/SupabaseSqlModal';
 
 export const ImportView: React.FC = () => {
   const { orders, importRecords, processImport, recordFailedImport, currentUser } = useStore();
@@ -66,7 +64,6 @@ export const ImportView: React.FC = () => {
     };
   }, [isSavingToDb]);
   const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
-  const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   
@@ -527,59 +524,15 @@ export const ImportView: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => setIsCleanModalOpen(true)}
-            disabled={isLoading || isSavingToDb}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg shadow-xs transition-colors cursor-pointer"
-            title="Limpeza do banco de dados protegida por senha de segurança"
-          >
-            <Lock className="w-3.5 h-3.5 text-rose-600" />
-            <span>Limpar Banco de Dados</span>
-          </button>
-
-          <button
-            onClick={handleImportCleanReport}
-            disabled={isLoading || isSavingToDb}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg shadow-xs transition-colors cursor-pointer"
-            title="Importa o relatório completo e higienizado com unidades e quantitativos validados"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Carga Limpa SESAU</span>
-          </button>
-
-          <button
-            onClick={handleSimulateExampleImport}
-            disabled={isLoading}
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg shadow-xs transition-colors cursor-pointer"
-            title="Simula a leitura de uma planilha contendo novos pedidos e atualizações"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>Simular Carga</span>
-          </button>
-
-          <button
-            onClick={() => setIsSqlModalOpen(true)}
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg shadow-xs transition-colors cursor-pointer"
-            title="Exibir comandos SQL para o Supabase"
-          >
-            <Database className="w-3.5 h-3.5 text-emerald-600" />
-            <span>SQL Supabase</span>
-          </button>
-
-          <button
             onClick={handleDownloadSampleTemplate}
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg shadow-xs transition-colors cursor-pointer"
+            className="inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg shadow-xs transition-colors cursor-pointer"
+            title="Baixar planilha modelo (.xlsx) padrão SESAU para importação"
           >
             <Download className="w-3.5 h-3.5 text-blue-600" />
-            <span>Modelo (.xlsx)</span>
+            <span>Baixar Modelo (.xlsx)</span>
           </button>
         </div>
       </div>
-
-      {/* Supabase SQL Modal */}
-      <SupabaseSqlModal
-        isOpen={isSqlModalOpen}
-        onClose={() => setIsSqlModalOpen(false)}
-      />
 
       {/* Security-Locked Modal to Clean Database */}
       <ClearDatabaseModal
@@ -649,15 +602,6 @@ export const ImportView: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsSqlModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-slate-800 hover:bg-slate-100 border border-rose-300 font-bold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
-                title="Visualizar e copiar script SQL de correção para o Supabase"
-              >
-                <Database className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Ver SQL Supabase</span>
-              </button>
-
               {unfinishedStatus.canRetrySave && analysis && (
                 <button
                   onClick={handleConfirmImport}

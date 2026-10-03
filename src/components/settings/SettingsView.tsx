@@ -16,7 +16,6 @@ import {
   Database
 } from 'lucide-react';
 import { ClearDatabaseModal } from '../common/ClearDatabaseModal';
-import { SupabaseSqlModal } from '../common/SupabaseSqlModal';
 
 export const SettingsView: React.FC = () => {
   const { 
@@ -37,7 +36,6 @@ export const SettingsView: React.FC = () => {
   const [autoLink, setAutoLink] = useState(settings.auto_vincular_cronograma);
   const [saveFeedback, setSaveFeedback] = useState(false);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
-  const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
 
   const handleSaveSettings = () => {
     updateSettings({
@@ -234,14 +232,6 @@ export const SettingsView: React.FC = () => {
 
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <button
-            onClick={() => setIsSqlModalOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold text-slate-800 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg shadow-xs transition-colors cursor-pointer"
-          >
-            <Database className="w-4 h-4 text-emerald-600" />
-            <span>Comandos SQL do Supabase</span>
-          </button>
-
-          <button
             onClick={() => setIsClearModalOpen(true)}
             className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs transition-colors cursor-pointer"
           >
@@ -251,12 +241,6 @@ export const SettingsView: React.FC = () => {
           </button>
         </div>
       </div>
-
-      {/* Supabase SQL Script Modal */}
-      <SupabaseSqlModal
-        isOpen={isSqlModalOpen}
-        onClose={() => setIsSqlModalOpen(false)}
-      />
 
       {/* Security-Locked Clear Database Modal */}
       <ClearDatabaseModal

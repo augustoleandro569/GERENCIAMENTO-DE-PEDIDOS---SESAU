@@ -18,7 +18,10 @@ import {
   ArrowRight,
   Sparkles,
   BarChart3,
-  RotateCcw
+  RotateCcw,
+  Zap,
+  Activity,
+  CheckCheck
 } from 'lucide-react';
 import { Order } from '../../types';
 
@@ -134,6 +137,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
 
   // Aggregate metrics
   const metrics = useMemo(() => {
+    let rascunho = 0;
+    let aguardandoValidacao = 0;
     let aguardandoAprovacao = 0;
     let aprovados = 0;
     let aguardandoSeparacao = 0;
@@ -142,8 +147,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
     let emConferencia = 0;
     let expedidos = 0;
     let emTransporte = 0;
-    let entregues = 0;
     let entreguesParcialmente = 0;
+    let entregues = 0;
     let rejeitados = 0;
     let cancelados = 0;
     let atrasados = 0;
@@ -158,9 +163,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
       if (o.tipo === 'Emergencial') emergenciais++;
 
       switch (o.status_operacional) {
-        case 'Aguardando Validação':
-        case 'Aguardando Aprovação':
         case 'Rascunho':
+          rascunho++;
+          break;
+        case 'Aguardando Validação':
+          aguardandoValidacao++;
+          break;
+        case 'Aguardando Aprovação':
           aguardandoAprovacao++;
           break;
         case 'Aprovado':
@@ -185,11 +194,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
         case 'Em Transporte':
           emTransporte++;
           break;
-        case 'Entregue':
-          entregues++;
-          break;
         case 'Entregue Parcialmente':
           entreguesParcialmente++;
+          break;
+        case 'Entregue':
+          entregues++;
           break;
         case 'Rejeitada':
           rejeitados++;
@@ -217,8 +226,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
       ? Math.round((entreguesNoPrazo / totalEntreguesValidados) * 100)
       : 96;
 
+    // Real operational WIP (pedidos em processamento logístico real: entre aprovação e entrega)
+    const emProcessamento = aprovados + aguardandoSeparacao + emSeparacao + aguardandoConferencia + emConferencia + expedidos + emTransporte;
+    
+    // Itens em movimentação física no armazém/transporte
+    let itensEmProcessamento = 0;
+    filteredOrders.forEach(o => {
+      const st = o.status_operacional;
+      if (['Aprovado', 'Aprovada', 'Aguardando Separação', 'Em Separação', 'Aguardando Conferência', 'Em Conferência', 'Expedida', 'Em Transporte'].includes(st)) {
+        itensEmProcessamento += o.quantidade_itens || 0;
+      }
+    });
+
+    // Total de pedidos válidos (descontando cancelados)
+    const pedidosValidos = Math.max(1, filteredOrders.length - cancelados);
+    const pedidosConcluidos = entregues + entreguesParcialmente;
+    const taxaAtendimento = Math.min(100, Math.round((pedidosConcluidos / pedidosValidos) * 100));
+
+    // Média de itens por pedido
+    const mediaItens = filteredOrders.length > 0 ? Math.round(totalItens / filteredOrders.length) : 0;
+
+    // Percentual emergencial
+    const percentualEmergenciais = filteredOrders.length > 0 ? Math.round((emergenciais / filteredOrders.length) * 100) : 0;
+
+    // Pendências críticas / Risco
+    const pendenciasCriticas = atrasados + rejeitados + atencao;
+
+    // Contagem de hospitais demandantes
+    const unidadesDemandantes = new Set(filteredOrders.map(o => o.unidade)).size;
+
     return {
       total: filteredOrders.length,
+      rascunho,
+      aguardandoValidacao,
       aguardandoAprovacao,
       aprovados,
       aguardandoSeparacao,
@@ -227,8 +267,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
       emConferencia,
       expedidos,
       emTransporte,
-      entregues,
       entreguesParcialmente,
+      entregues,
       rejeitados,
       cancelados,
       atrasados,
@@ -236,6 +276,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
       emergenciais,
       totalItens,
       percentualNoPrazo,
+      emProcessamento,
+      itensEmProcessamento,
+      taxaAtendimento,
+      mediaItens,
+      percentualEmergenciais,
+      pendenciasCriticas,
+      unidadesDemandantes,
+      pedidosConcluidos,
+      pedidosValidos,
     };
   }, [filteredOrders, schedulesMap, settings.horas_alerta_atencao]);
 
@@ -413,144 +462,194 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
         </div>
       </div>
 
-      {/* KPI Cards Grid - Rounded 3xl & Rich Interactivity */}
+      {/* Strategic Operational KPI Cards Grid - Non-Redundant Executive Logistics Intelligence */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
-        {/* Total Pedidos */}
+        {/* KPI 1: Volume Total & Densidade de Carga */}
         <div 
           onClick={() => onNavigateToOrders()}
-          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-blue-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden"
+          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-blue-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden flex flex-col justify-between"
+          title="Clique para visualizar todos os pedidos na Tabela"
         >
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-bold">Total Pedidos</span>
-            <div className="w-8 h-8 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
-              <Package className="w-4 h-4" />
+          <div>
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-xs font-bold text-slate-700">Volume Total</span>
+              <div className="w-8 h-8 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                <Package className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold font-mono text-slate-900 tabular-nums">
+              {metrics.total.toLocaleString()}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1 font-mono font-medium truncate">
+              {metrics.totalItens.toLocaleString()} itens · Média {metrics.mediaItens}/ped.
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono text-slate-900 tabular-nums">
-            {metrics.total.toLocaleString()}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1 font-mono font-medium">
-            {metrics.totalItens.toLocaleString()} itens totais
-          </div>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-blue-600 font-bold flex items-center gap-0.5 mt-1.5">
-            <span>Ver lista completa</span>
-            <ArrowRight className="w-3 h-3" />
+          <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
+            <span className="font-semibold text-blue-700">{metrics.unidadesDemandantes} hospitais</span>
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-600 font-bold flex items-center gap-0.5">
+              <span>Ver</span>
+              <ArrowRight className="w-3 h-3" />
+            </span>
           </div>
         </div>
 
-        {/* Aguardando Aprovação */}
-        <div 
-          onClick={() => onNavigateToOrders({ status: 'Aguardando Aprovação' })}
-          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-amber-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden"
-        >
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-bold">Aguard. Aprov.</span>
-            <div className="w-8 h-8 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
-              <Clock className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-2xl font-bold font-mono text-amber-700 tabular-nums">
-            {metrics.aguardandoAprovacao}
-          </div>
-          <div className="text-[11px] text-amber-600 mt-1 font-semibold truncate">
-            Exige validação SESAU
-          </div>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-amber-700 font-bold flex items-center gap-0.5 mt-1.5">
-            <span>Filtrar etapa</span>
-            <ArrowRight className="w-3 h-3" />
-          </div>
-        </div>
-
-        {/* Em Separação / Expedição */}
-        <div 
-          onClick={() => onNavigateToOrders({ status: 'Em Separação' })}
-          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-purple-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden"
-        >
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-bold">Em Separação</span>
-            <div className="w-8 h-8 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
-              <Boxes className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-2xl font-bold font-mono text-purple-700 tabular-nums">
-            {metrics.emSeparacao + metrics.aguardandoSeparacao}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1 truncate font-medium">
-            {metrics.expedidos + metrics.emConferencia} em expedição
-          </div>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-purple-700 font-bold flex items-center gap-0.5 mt-1.5">
-            <span>Filtrar etapa</span>
-            <ArrowRight className="w-3 h-3" />
-          </div>
-        </div>
-
-        {/* Em Transporte */}
-        <div 
-          onClick={() => onNavigateToOrders({ status: 'Em Transporte' })}
-          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-orange-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden"
-        >
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-bold">Em Transporte</span>
-            <div className="w-8 h-8 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
-              <Truck className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="text-2xl font-bold font-mono text-orange-700 tabular-nums">
-            {metrics.emTransporte}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1 truncate font-medium">
-            Em rota para hospitais
-          </div>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-orange-700 font-bold flex items-center gap-0.5 mt-1.5">
-            <span>Filtrar etapa</span>
-            <ArrowRight className="w-3 h-3" />
-          </div>
-        </div>
-
-        {/* Entregues */}
+        {/* KPI 2: Taxa de Atendimento (Fulfillment Rate) */}
         <div 
           onClick={() => onNavigateToOrders({ status: 'Entregue' })}
-          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-emerald-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden"
+          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-emerald-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden flex flex-col justify-between"
+          title="Taxa de pedidos concluídos e entregues em relação à demanda válida"
         >
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-bold">Entregues</span>
-            <div className="w-8 h-8 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
-              <CheckCircle2 className="w-4 h-4" />
+          <div>
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-xs font-bold text-slate-700">Atendimento</span>
+              <div className="w-8 h-8 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold font-mono text-emerald-700 tabular-nums">
+              {metrics.taxaAtendimento}%
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1 truncate font-medium">
+              {metrics.pedidosConcluidos.toLocaleString()} de {metrics.pedidosValidos.toLocaleString()} entregues
+            </div>
+            <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
+              <div 
+                className="bg-emerald-500 h-full rounded-full transition-all" 
+                style={{ width: `${metrics.taxaAtendimento}%` }}
+              />
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono text-emerald-700 tabular-nums">
-            {metrics.entregues + metrics.entreguesParcialmente}
-          </div>
-          <div className="text-[11px] text-emerald-600 mt-1 font-bold font-mono truncate">
-            {metrics.percentualNoPrazo}% no prazo
-          </div>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-emerald-700 font-bold flex items-center gap-0.5 mt-1.5">
-            <span>Ver entregues</span>
-            <ArrowRight className="w-3 h-3" />
+          <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px]">
+            <span className="font-bold text-emerald-700">Demanda Concluída</span>
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-emerald-700 font-bold flex items-center gap-0.5">
+              <span>Filtrar</span>
+              <ArrowRight className="w-3 h-3" />
+            </span>
           </div>
         </div>
 
-        {/* Pedidos Emergenciais & Atrasos */}
+        {/* KPI 3: Pontualidade & SLA Global */}
         <div 
-          onClick={() => onNavigateToOrders({ tipo: 'Emergencial' })}
-          className="bg-white p-4 rounded-3xl border border-rose-200 bg-rose-50/20 hover:border-rose-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden"
+          onClick={() => onNavigateToOrders()}
+          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-teal-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden flex flex-col justify-between"
+          title="Índice de entregas realizadas rigorosamente dentro do prazo pactuado"
         >
-          <div className="flex items-center justify-between text-rose-700 mb-1">
-            <span className="text-xs font-bold">Emergenciais</span>
-            <div className="w-8 h-8 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
-              <AlertCircle className="w-4 h-4" />
+          <div>
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-xs font-bold text-slate-700">Índice de SLA</span>
+              <div className="w-8 h-8 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                <Clock className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold font-mono text-teal-700 tabular-nums">
+              {metrics.percentualNoPrazo}%
+            </div>
+            <div className="text-[11px] text-teal-600 mt-1 font-bold font-mono truncate">
+              {metrics.atrasados > 0 ? `${metrics.atrasados} fora do prazo` : '100% no prazo estipulado'}
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono text-rose-700 tabular-nums">
-            {metrics.emergenciais}
+          <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px]">
+            <span className="font-bold text-slate-500 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
+              Padrão SESAU
+            </span>
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-teal-700 font-bold flex items-center gap-0.5">
+              <span>Detalhes</span>
+              <ArrowRight className="w-3 h-3" />
+            </span>
           </div>
-          <div className="text-[11px] text-rose-600 mt-1 font-bold flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-            <span>{metrics.atrasados} atrasados</span>
+        </div>
+
+        {/* KPI 4: Carga Ativa na Operação (Pipeline WIP) */}
+        <div 
+          onClick={() => onNavigateToOrders({ status: 'Em Separação' })}
+          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-indigo-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden flex flex-col justify-between"
+          title="Pedidos aprovados em processamento logístico real: separação, conferência, expedição e transporte"
+        >
+          <div>
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-xs font-bold text-slate-700">Carga Ativa</span>
+              <div className="w-8 h-8 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                <Truck className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold font-mono text-indigo-700 tabular-nums">
+              {metrics.emProcessamento}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1 truncate font-medium">
+              {metrics.itensEmProcessamento.toLocaleString()} itens em picking / rota
+            </div>
           </div>
-          <div className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-rose-700 font-bold flex items-center gap-0.5 mt-1.5">
-            <span>Ver urgências</span>
-            <ArrowRight className="w-3 h-3" />
+          <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px]">
+            <span className="font-semibold text-indigo-700 truncate">
+              {metrics.expedidos + metrics.emTransporte} em trânsito
+            </span>
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-indigo-700 font-bold flex items-center gap-0.5">
+              <span>Ver fluxo</span>
+              <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* KPI 5: Índice de Criticidade & Emergência */}
+        <div 
+          onClick={() => onNavigateToOrders({ tipo: 'Emergencial' })}
+          className="bg-white p-4 rounded-3xl border border-slate-200/80 hover:border-amber-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden flex flex-col justify-between"
+          title="Demandas abertas para atendimento de urgência ou reposição de falta hospitalar"
+        >
+          <div>
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-xs font-bold text-slate-700">Emergência & Falta</span>
+              <div className="w-8 h-8 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                <Zap className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold font-mono text-amber-700 tabular-nums">
+              {metrics.emergenciais}
+            </div>
+            <div className="text-[11px] text-amber-700 mt-1 font-semibold truncate">
+              {metrics.percentualEmergenciais}% do volume total da rede
+            </div>
+          </div>
+          <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px]">
+            <span className="font-semibold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+              Alta Prioridade
+            </span>
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-700 font-bold flex items-center gap-0.5">
+              <span>Filtrar</span>
+              <ArrowRight className="w-3 h-3" />
+            </span>
+          </div>
+        </div>
+
+        {/* KPI 6: Risco Operacional & Pendências Críticas */}
+        <div 
+          onClick={() => onNavigateToOrders()}
+          className="bg-white p-4 rounded-3xl border border-rose-200 bg-rose-50/20 hover:border-rose-400 hover:shadow-lg hover:-translate-y-1 active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-xs group relative overflow-hidden flex flex-col justify-between"
+          title="Pedidos com atraso no cronograma, rejeições ou em faixa de atenção que exigem ação imediata"
+        >
+          <div>
+            <div className="flex items-center justify-between text-rose-700 mb-1">
+              <span className="text-xs font-bold">Risco & Pendências</span>
+              <div className="w-8 h-8 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-transform">
+                <AlertCircle className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold font-mono text-rose-700 tabular-nums">
+              {metrics.pendenciasCriticas}
+            </div>
+            <div className="text-[11px] text-rose-600 mt-1 font-bold flex items-center gap-1 truncate">
+              {metrics.atrasados > 0 && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping shrink-0" />}
+              <span>{metrics.atrasados} atrasos · {metrics.rejeitados} rejeitados</span>
+            </div>
+          </div>
+          <div className="mt-2.5 pt-2 border-t border-rose-100 flex items-center justify-between text-[10px]">
+            <span className="font-bold text-rose-700">
+              {metrics.pendenciasCriticas > 0 ? 'Exige Intervenção' : 'Operação Estável'}
+            </span>
+            <span className="opacity-0 group-hover:opacity-100 transition-opacity text-rose-700 font-bold flex items-center gap-0.5">
+              <span>Ver pendências</span>
+              <ArrowRight className="w-3 h-3" />
+            </span>
           </div>
         </div>
       </div>
@@ -567,29 +666,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5 pt-1">
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 2xl:grid-cols-14 gap-2 pt-1">
           {[
+            { label: 'Rascunho', status: 'Rascunho', count: metrics.rascunho, color: 'bg-slate-400', text: 'text-slate-700' },
+            { label: 'Aguard. Validação', status: 'Aguardando Validação', count: metrics.aguardandoValidacao, color: 'bg-amber-400', text: 'text-amber-800' },
             { label: 'Aguard. Aprovação', status: 'Aguardando Aprovação', count: metrics.aguardandoAprovacao, color: 'bg-amber-500', text: 'text-amber-700' },
             { label: 'Aprovados', status: 'Aprovada', count: metrics.aprovados, color: 'bg-blue-500', text: 'text-blue-700' },
             { label: 'Aguard. Separação', status: 'Aguardando Separação', count: metrics.aguardandoSeparacao, color: 'bg-indigo-500', text: 'text-indigo-700' },
             { label: 'Em Separação', status: 'Em Separação', count: metrics.emSeparacao, color: 'bg-purple-500', text: 'text-purple-700' },
-            { label: 'Conferência / Exp.', status: 'Expedida', count: metrics.aguardandoConferencia + metrics.emConferencia + metrics.expedidos, color: 'bg-teal-500', text: 'text-teal-700' },
+            { label: 'Aguard. Conferência', status: 'Aguardando Conferência', count: metrics.aguardandoConferencia, color: 'bg-sky-500', text: 'text-sky-700' },
+            { label: 'Em Conferência', status: 'Em Conferência', count: metrics.emConferencia, color: 'bg-teal-500', text: 'text-teal-700' },
+            { label: 'Expedida', status: 'Expedida', count: metrics.expedidos, color: 'bg-cyan-500', text: 'text-cyan-700' },
             { label: 'Em Transporte', status: 'Em Transporte', count: metrics.emTransporte, color: 'bg-orange-500', text: 'text-orange-700' },
+            { label: 'Entrega Parcial', status: 'Entregue Parcialmente', count: metrics.entreguesParcialmente, color: 'bg-lime-500', text: 'text-lime-700' },
             { label: 'Entregues', status: 'Entregue', count: metrics.entregues, color: 'bg-emerald-500', text: 'text-emerald-700' },
-            { label: 'Rejeitados/Canc.', status: 'Rejeitada', count: metrics.rejeitados + metrics.cancelados, color: 'bg-rose-500', text: 'text-rose-700' },
+            { label: 'Rejeitados', status: 'Rejeitada', count: metrics.rejeitados, color: 'bg-rose-500', text: 'text-rose-700' },
+            { label: 'Cancelados', status: 'Cancelada', count: metrics.cancelados, color: 'bg-red-700', text: 'text-red-800' },
           ].map((step, idx) => (
             <div 
               key={idx} 
               onClick={() => onNavigateToOrders({ status: step.status })}
-              className="bg-slate-50/80 p-3 rounded-2xl border border-slate-200/80 hover:bg-white hover:border-blue-300 hover:shadow-xs hover:-translate-y-0.5 transition-all cursor-pointer active:scale-95 group"
+              className="bg-slate-50/80 p-2.5 rounded-2xl border border-slate-200/80 hover:bg-white hover:border-blue-300 hover:shadow-xs hover:-translate-y-0.5 transition-all cursor-pointer active:scale-95 group flex flex-col justify-between"
             >
-              <div className="text-[11px] font-semibold text-slate-500 truncate group-hover:text-blue-700 transition-colors" title={step.label}>
+              <div className="text-[10px] font-semibold text-slate-500 truncate group-hover:text-blue-700 transition-colors" title={step.label}>
                 {step.label}
               </div>
-              <div className={`text-lg font-bold font-mono mt-0.5 ${step.text} tabular-nums`}>
+              <div className={`text-base font-bold font-mono mt-0.5 ${step.text} tabular-nums`}>
                 {step.count}
               </div>
-              <div className="w-full bg-slate-200/80 h-1.5 rounded-full mt-2 overflow-hidden">
+              <div className="w-full bg-slate-200/80 h-1.5 rounded-full mt-1.5 overflow-hidden">
                 <div 
                   className={`h-full ${step.color} rounded-full transition-all`} 
                   style={{ width: `${Math.min(100, Math.round((step.count / Math.max(1, metrics.total)) * 100))}%` }}

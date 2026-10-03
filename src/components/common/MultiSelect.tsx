@@ -18,6 +18,7 @@ export interface MultiSelectProps {
   className?: string;
   icon?: React.ReactNode;
   showSearch?: boolean;
+  align?: 'left' | 'right';
 }
 
 export const MultiSelect: React.FC<MultiSelectProps> = ({
@@ -28,6 +29,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   className = '',
   icon,
   showSearch = false,
+  align = 'left',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -90,7 +92,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
   };
 
   return (
-    <div className={`relative ${className}`} ref={containerRef}>
+    <div className={`relative ${isOpen ? 'z-50' : ''} ${className}`} ref={containerRef}>
       {/* Trigger Button */}
       <button
         type="button"
@@ -117,9 +119,11 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
         </div>
       </button>
 
-      {/* Dropdown Popup */}
+      {/* Dropdown Popup: Overlays table cleanly */}
       {isOpen && (
-        <div className="absolute top-full left-0 mt-1.5 w-64 max-w-[90vw] bg-white rounded-2xl border border-slate-300 shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100 flex flex-col">
+        <div className={`absolute top-full mt-1.5 w-72 max-w-[90vw] bg-white rounded-2xl border border-slate-300 shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100 flex flex-col ring-1 ring-slate-900/10 ${
+          align === 'right' ? 'right-0' : 'left-0'
+        }`}>
           {/* Header Controls: Select All & Clear */}
           <div className="p-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-[11px] font-bold">
             <button
