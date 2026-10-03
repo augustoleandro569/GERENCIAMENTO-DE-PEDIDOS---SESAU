@@ -891,94 +891,12 @@ class DatabaseSyncService {
     const supabase = getSupabaseClient();
     let supabaseSuccess = false;
 
-    if (supabase && ordersToSave && ordersToSave.length > 0 && !signal?.aborted) {
+    if (supabase && !signal?.aborted) {
       try {
         this.status.supabaseSyncing = true;
         this.notifyStatus();
 
-        const payload = ordersToSave.map(order => ({
-          id: order.id,
-          codigo: order.codigo,
-          origem: order.origem || 'IMPORTAÇÃO',
-          tipo: order.tipo,
-          solicitante: order.solicitante,
-          cpf: order.cpf,
-          programa: order.programa,
-          unidade: order.unidade,
-          quantidade_itens: order.quantidade_itens,
-          criado_em: order.criado_em,
-          status_origem: order.status_origem,
-          status_operacional: order.status_operacional,
-          validador: order.validador,
-          validada_em: order.validada_em,
-          separador: order.separador,
-          separado_em: order.separado_em,
-          conferente: order.conferente,
-          conferido_em: order.conferido_em,
-          expedidor: order.expedidor,
-          expedido_em: order.expedido_em,
-          entregador: order.entregador,
-          entregue_em: order.entregue_em,
-          historico_original: (order.historico_original || '').slice(0, 1500),
-          cronograma_id: order.cronograma_id ?? null,
-          cronograma_vinculo: order.cronograma_vinculo || 'NENHUM',
-          data_inicio: order.data_inicio ?? null,
-          data_solicitacao: order.data_solicitacao ?? null,
-          data_aprovacao: order.data_aprovacao ?? null,
-          data_inicio_separacao: order.data_inicio_separacao ?? null,
-          data_expedicao: order.data_expedicao ?? null,
-          data_prevista_entrega: order.data_prevista_entrega ?? null,
-          prioridade: order.prioridade,
-          observacoes: order.observacoes,
-          importacao_id: order.importacao_id || importRecord?.id,
-          atualizado_em: order.atualizado_em || new Date().toISOString(),
-        }));
-
-        const CHUNK_SIZE = 500;
-        const totalChunks = Math.ceil(payload.length / CHUNK_SIZE);
-
-        for (let i = 0; i < payload.length; i += CHUNK_SIZE * 2) {
-          if (signal?.aborted) throw new Error('Gravação cancelada pelo usuário.');
-
-          const chunk1 = payload.slice(i, i + CHUNK_SIZE);
-          const chunk2 = payload.slice(i + CHUNK_SIZE, i + CHUNK_SIZE * 2);
-
-          const upsertPromises = [supabase.from('pedidos').upsert(chunk1)];
-          if (chunk2.length > 0) {
-            upsertPromises.push(supabase.from('pedidos').upsert(chunk2));
-          }
-
-          const results = await Promise.all(upsertPromises);
-          for (const res of results) {
-            if (res.error) {
-              console.warn('Supabase pedidos chunk upsert note:', res.error.message);
-              failureError = res.error.message;
-            }
-          }
-
-          savedOrdersCount += chunk1.length + chunk2.length;
-          const currentBatchDisplay = Math.min(Math.ceil((i + CHUNK_SIZE * 2) / CHUNK_SIZE), totalChunks);
-          const elapsedSec = Math.max(0.1, (performance.now() - startTime) / 1000);
-          const speed = Math.round(savedOrdersCount / elapsedSec);
-          const pct = Math.min(92, Math.round((savedOrdersCount / ordersToSave.length) * 85) + 5);
-
-          onProgress?.({
-            stage: 'SUPABASE',
-            current: savedOrdersCount,
-            total: ordersToSave.length,
-            percentage: pct,
-            message: `Gravando no Supabase: ${savedOrdersCount.toLocaleString('pt-BR')} de ${ordersToSave.length.toLocaleString('pt-BR')} pedidos salvos (Lote ${currentBatchDisplay}/${totalChunks})...`,
-            speedRowsPerSec: speed,
-            elapsedSec: Math.round(elapsedSec),
-            currentBatch: currentBatchDisplay,
-            totalBatches: totalChunks,
-          });
-
-          // Yield to UI rendering loop
-          await new Promise(r => setTimeout(r, 5));
-        }
-
-        // Save Import Record in Supabase
+        // 1.1 ALWAYS Save Import Record in Supabase FIRST to satisfy foreign key constraints (fk_pedidos_importacoes)
         if (importRecord) {
           const fullRecordPayload = {
             id: importRecord.id,
@@ -990,11 +908,15 @@ class DatabaseSyncService {
             atualizados: importRecord.atualizados,
             sem_alteracao: importRecord.sem_alteracao,
             erros: importRecord.erros,
-            status: importRecord.status,
-            motivo_status: importRecord.motivo_status,
+            status: importRecord.status || 'CONCLUIDA',
+            motivo_status: importRecord.motivo_status || null,
+            tempo_processamento_ms: importRecord.tempo_processamento_ms || Math.round(performance.now() - startTime),
           };
-          const { error: impErr } = await supabase.from('importacoes').upsert(fullRecordPayload);
+
+          const { error: impErr } = await supabase.from('importacoes').upsert(fullRecordPayload, { onConflict: 'id' });
           if (impErr) {
+            console.warn('Supabase importacoes upsert note:', impErr.message);
+            // Fallback without extended fields if table was created with older script
             try {
               await supabase.from('importacoes').upsert({
                 id: importRecord.id,
@@ -1006,40 +928,142 @@ class DatabaseSyncService {
                 atualizados: importRecord.atualizados,
                 sem_alteracao: importRecord.sem_alteracao,
                 erros: importRecord.erros,
-              });
-            } catch (e) {
-              console.warn('Supabase fallback import record upsert note:', e);
+              }, { onConflict: 'id' });
+            } catch (fallbackErr) {
+              console.warn('Supabase fallback import record note:', fallbackErr);
             }
           }
         }
 
-        // Also sync timeline events for imported orders (up to 4 events per order)
-        const eventsToSync: any[] = [];
-        ordersToSave.forEach(ord => {
-          if (ord.eventos && ord.eventos.length > 0) {
-            ord.eventos.slice(0, 4).forEach(ev => {
-              eventsToSync.push({
-                id: ev.id,
-                pedido_id: ev.pedido_id || ord.id,
-                tipo_evento: ev.tipo_evento,
-                status: ev.status,
-                data_evento: ev.data_evento,
-                responsavel: ev.responsavel,
-                origem: ev.origem || 'IMPORTAÇÃO',
-                observacao: ev.observacao || null,
-              });
-            });
-          }
-        });
+        // 1.2 Bulk Upsert Pedidos into Supabase
+        if (ordersToSave && ordersToSave.length > 0) {
+          const payload = ordersToSave.map(order => ({
+            id: order.id,
+            codigo: order.codigo,
+            origem: order.origem || 'IMPORTAÇÃO',
+            tipo: order.tipo,
+            solicitante: order.solicitante,
+            cpf: order.cpf,
+            programa: order.programa,
+            unidade: order.unidade,
+            quantidade_itens: order.quantidade_itens,
+            criado_em: order.criado_em,
+            status_origem: order.status_origem,
+            status_operacional: order.status_operacional,
+            validador: order.validador,
+            validada_em: order.validada_em,
+            separador: order.separador,
+            separado_em: order.separado_em,
+            conferente: order.conferente,
+            conferido_em: order.conferido_em,
+            expedidor: order.expedidor,
+            expedido_em: order.expedido_em,
+            entregador: order.entregador,
+            entregue_em: order.entregue_em,
+            historico_original: (order.historico_original || '').slice(0, 1500),
+            cronograma_id: order.cronograma_id ?? null,
+            cronograma_vinculo: order.cronograma_vinculo || 'NENHUM',
+            data_inicio: order.data_inicio ?? null,
+            data_solicitacao: order.data_solicitacao ?? null,
+            data_aprovacao: order.data_aprovacao ?? null,
+            data_inicio_separacao: order.data_inicio_separacao ?? null,
+            data_expedicao: order.data_expedicao ?? null,
+            data_prevista_entrega: order.data_prevista_entrega ?? null,
+            prioridade: order.prioridade || 'Normal',
+            observacoes: order.observacoes || null,
+            importacao_id: order.importacao_id || importRecord?.id || null,
+            atualizado_em: order.atualizado_em || new Date().toISOString(),
+          }));
 
-        if (eventsToSync.length > 0) {
-          for (let i = 0; i < eventsToSync.length; i += 500) {
-            if (signal?.aborted) break;
-            const evChunk = eventsToSync.slice(i, i + 500);
-            try {
-              await supabase.from('eventos_pedidos').upsert(evChunk);
-            } catch (err) {
-              console.warn('Supabase eventos_pedidos upsert note:', err);
+          const CHUNK_SIZE = 500;
+          const totalChunks = Math.ceil(payload.length / CHUNK_SIZE);
+
+          for (let i = 0; i < payload.length; i += CHUNK_SIZE * 2) {
+            if (signal?.aborted) throw new Error('Gravação cancelada pelo usuário.');
+
+            const chunk1 = payload.slice(i, i + CHUNK_SIZE);
+            const chunk2 = payload.slice(i + CHUNK_SIZE, i + CHUNK_SIZE * 2);
+
+            // Upsert on 'codigo' so repeated imports update existing order records without duplicate key errors
+            const upsertChunk = async (chunk: any[]) => {
+              if (chunk.length === 0) return { error: null, count: 0 };
+              const { error } = await supabase.from('pedidos').upsert(chunk, { onConflict: 'codigo' });
+              if (error) {
+                // If onConflict 'codigo' fails (e.g. index missing), try onConflict 'id'
+                const fallback = await supabase.from('pedidos').upsert(chunk, { onConflict: 'id' });
+                return { error: fallback.error, count: fallback.error ? 0 : chunk.length };
+              }
+              return { error: null, count: chunk.length };
+            };
+
+            const [res1, res2] = await Promise.all([
+              upsertChunk(chunk1),
+              chunk2.length > 0 ? upsertChunk(chunk2) : Promise.resolve({ error: null, count: 0 })
+            ]);
+
+            if (res1.error) {
+              console.warn('Supabase pedidos chunk 1 upsert note:', res1.error.message);
+              failureError = res1.error.message;
+            } else {
+              savedOrdersCount += res1.count;
+            }
+
+            if (res2.error) {
+              console.warn('Supabase pedidos chunk 2 upsert note:', res2.error.message);
+              failureError = res2.error.message;
+            } else {
+              savedOrdersCount += res2.count;
+            }
+
+            const currentBatchDisplay = Math.min(Math.ceil((i + CHUNK_SIZE * 2) / CHUNK_SIZE), totalChunks);
+            const elapsedSec = Math.max(0.1, (performance.now() - startTime) / 1000);
+            const speed = Math.round(savedOrdersCount / elapsedSec);
+            const pct = Math.min(92, Math.round((savedOrdersCount / ordersToSave.length) * 85) + 5);
+
+            onProgress?.({
+              stage: 'SUPABASE',
+              current: savedOrdersCount,
+              total: ordersToSave.length,
+              percentage: pct,
+              message: `Gravando no Supabase: ${savedOrdersCount.toLocaleString('pt-BR')} de ${ordersToSave.length.toLocaleString('pt-BR')} pedidos salvos (Lote ${currentBatchDisplay}/${totalChunks})...`,
+              speedRowsPerSec: speed,
+              elapsedSec: Math.round(elapsedSec),
+              currentBatch: currentBatchDisplay,
+              totalBatches: totalChunks,
+            });
+
+            // Yield to UI rendering loop
+            await new Promise(r => setTimeout(r, 5));
+          }
+
+          // 1.3 Sync Timeline Events
+          const eventsToSync: any[] = [];
+          ordersToSave.forEach(ord => {
+            if (ord.eventos && ord.eventos.length > 0) {
+              ord.eventos.slice(0, 4).forEach(ev => {
+                eventsToSync.push({
+                  id: ev.id,
+                  pedido_id: ev.pedido_id || ord.id,
+                  tipo_evento: ev.tipo_evento,
+                  status: ev.status,
+                  data_evento: ev.data_evento,
+                  responsavel: ev.responsavel,
+                  origem: ev.origem || 'IMPORTAÇÃO',
+                  observacao: ev.observacao || null,
+                });
+              });
+            }
+          });
+
+          if (eventsToSync.length > 0) {
+            for (let i = 0; i < eventsToSync.length; i += 500) {
+              if (signal?.aborted) break;
+              const evChunk = eventsToSync.slice(i, i + 500);
+              try {
+                await supabase.from('eventos_pedidos').upsert(evChunk, { onConflict: 'id' });
+              } catch (err) {
+                console.warn('Supabase eventos_pedidos upsert note:', err);
+              }
             }
           }
         }
@@ -1077,6 +1101,7 @@ class DatabaseSyncService {
           ).catch(e => console.warn('Firestore import record mirror note:', e));
         }
 
+        let firestoreSavedCount = 0;
         if (ordersToSave && ordersToSave.length > 0) {
           const BATCH_SIZE = 400;
           const chunks: Order[][] = [];
@@ -1098,6 +1123,7 @@ class DatabaseSyncService {
                     batch.set(orderDocRef, sanitizeOrderForFirestore(order), { merge: true });
                   }
                   await batch.commit();
+                  firestoreSavedCount += chunk.length;
                 })
               ),
               3500
@@ -1105,6 +1131,10 @@ class DatabaseSyncService {
               console.warn('Firestore batch wave note (safe fallback, data is secured in Supabase):', e);
             });
           }
+        }
+
+        if (savedOrdersCount === 0 && firestoreSavedCount > 0) {
+          savedOrdersCount = firestoreSavedCount;
         }
 
         if (auditLogsToSave && auditLogsToSave.length > 0) {

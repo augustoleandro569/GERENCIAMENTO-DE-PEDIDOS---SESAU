@@ -35,9 +35,11 @@ import {
   ChevronsRight,
   Info,
   Zap,
-  RotateCcw
+  RotateCcw,
+  Database
 } from 'lucide-react';
 import { ClearDatabaseModal } from '../common/ClearDatabaseModal';
+import { SupabaseSqlModal } from '../common/SupabaseSqlModal';
 
 export const ImportView: React.FC = () => {
   const { orders, importRecords, processImport, recordFailedImport, currentUser } = useStore();
@@ -64,6 +66,7 @@ export const ImportView: React.FC = () => {
     };
   }, [isSavingToDb]);
   const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
+  const [isSqlModalOpen, setIsSqlModalOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   
@@ -554,6 +557,15 @@ export const ImportView: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setIsSqlModalOpen(true)}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg shadow-xs transition-colors cursor-pointer"
+            title="Exibir comandos SQL para o Supabase"
+          >
+            <Database className="w-3.5 h-3.5 text-emerald-600" />
+            <span>SQL Supabase</span>
+          </button>
+
+          <button
             onClick={handleDownloadSampleTemplate}
             className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg shadow-xs transition-colors cursor-pointer"
           >
@@ -562,6 +574,12 @@ export const ImportView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Supabase SQL Modal */}
+      <SupabaseSqlModal
+        isOpen={isSqlModalOpen}
+        onClose={() => setIsSqlModalOpen(false)}
+      />
 
       {/* Security-Locked Modal to Clean Database */}
       <ClearDatabaseModal
@@ -631,6 +649,15 @@ export const ImportView: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsSqlModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-slate-800 hover:bg-slate-100 border border-rose-300 font-bold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
+                title="Visualizar e copiar script SQL de correção para o Supabase"
+              >
+                <Database className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Ver SQL Supabase</span>
+              </button>
+
               {unfinishedStatus.canRetrySave && analysis && (
                 <button
                   onClick={handleConfirmImport}

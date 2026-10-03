@@ -252,15 +252,31 @@ class AppStore {
           return true;
         });
 
-        // Merge: keep only pending local orders that also follow SOL-2026 and are not duplicated
-        const backendCodes = new Set(backendOrders.map(o => o.codigo.toUpperCase()));
-        const localPending = this.orders.filter(o => {
-          if (!o || !o.id || !o.codigo) return false;
-          const cleanCode = o.codigo.trim().toUpperCase();
-          return cleanCode.startsWith('SOL-2026') && !seenIds.has(o.id) && !backendCodes.has(cleanCode) && o.origem === 'IMPORTAÇÃO';
+        // Merge orders intelligently by code, preserving the newest data
+        const mergedMap = new Map<string, Order>();
+        backendOrders.forEach(bo => {
+          if (bo && bo.codigo) {
+            mergedMap.set(bo.codigo.toUpperCase().trim(), bo);
+          }
         });
 
-        this.orders = [...localPending, ...backendOrders];
+        // If local order has more recent updates (or was imported in session), retain the latest version
+        this.orders.forEach(lo => {
+          if (!lo || !lo.codigo) return;
+          const codeUpper = lo.codigo.toUpperCase().trim();
+          const existing = mergedMap.get(codeUpper);
+          if (!existing) {
+            mergedMap.set(codeUpper, lo);
+          } else {
+            const loTime = new Date(lo.atualizado_em || lo.criado_em || 0).getTime();
+            const boTime = new Date(existing.atualizado_em || existing.criado_em || 0).getTime();
+            if (loTime > boTime) {
+              mergedMap.set(codeUpper, lo);
+            }
+          }
+        });
+
+        this.orders = Array.from(mergedMap.values());
 
         if (res.schedules.length > 0) {
           this.schedules = res.schedules;
@@ -713,7 +729,8 @@ class AppStore {
 
       if (item.action === 'NOVO') {
         newCount++;
-        const orderId = `ord-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        const cleanCodeSlug = code.toLowerCase().replace(/[^a-z0-9]/g, '-');
+        const orderId = existingInOrders?.id || `ord-${cleanCodeSlug}`;
         const parsedEvents = parseHistoryToEvents(orderId, row.historico, row.solicitante);
 
         let cronogramaId = undefined;
@@ -896,9 +913,11 @@ class AppStore {
       }
     }
 
-    // Prepend all new orders in a single fast operation
+    // Prepend all new orders in a single fast operation, or clone array so React triggers re-render
     if (newOrdersToPrepend.length > 0) {
       this.orders = [...newOrdersToPrepend, ...this.orders];
+    } else {
+      this.orders = [...this.orders];
     }
 
     const isNonConcluded = (newCount === 0 && updateCount === 0 && unchangedCount === 0) || (errorCount >= analysis.totalFound);
@@ -928,8 +947,10 @@ class AppStore {
 
     this.importRecords.unshift(record);
     this.save(STORAGE_KEYS.ORDERS, this.orders);
+    idbSet(STORAGE_KEYS.ORDERS, this.orders).catch(err => console.warn('IndexedDB orders save note:', err));
     this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
     this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
+    this.notify();
     
     // Select records to persist to remote database:
     // If only specific rows are new or changed, persist only them for maximum speed.
