@@ -12,6 +12,7 @@ import { cleanUnitName } from '../../utils/unitNormalizer';
 import { formatDate } from '../../utils/dateUtils';
 import { showToast } from '../common/Toast';
 import { ImportRecord, ImportStatus } from '../../types';
+import { DatabaseSaveProgress } from '../../services/dbSync';
 import { 
   Upload, 
   FileSpreadsheet, 
@@ -43,11 +44,13 @@ export const ImportView: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSavingToDb, setIsSavingToDb] = useState(false);
+  const [dbSaveProgress, setDbSaveProgress] = useState<DatabaseSaveProgress | null>(null);
+  const [dbSaveAbortController, setDbSaveAbortController] = useState<AbortController | null>(null);
   const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   
-  // Real-time Import Progress & Status
+  // Real-time Import Progress & Status (File Reading stage)
   const [importProgress, setImportProgress] = useState<ImportProgress & { elapsedSec?: number } | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   
@@ -58,6 +61,8 @@ export const ImportView: React.FC = () => {
     status: ImportStatus;
     timestamp: string;
     linhasLidas?: number;
+    stage?: 'LEITURA' | 'GRAVACAO_BANCO';
+    canRetrySave?: boolean;
   } | null>(null);
 
   // Modal to inspect full details of an import record
@@ -77,6 +82,12 @@ export const ImportView: React.FC = () => {
   const handleCancelRunningImport = () => {
     if (abortController) {
       abortController.abort();
+    }
+  };
+
+  const handleCancelDbSave = () => {
+    if (dbSaveAbortController) {
+      dbSaveAbortController.abort();
     }
   };
 
@@ -205,9 +216,28 @@ export const ImportView: React.FC = () => {
     setUnfinishedStatus(null);
 
     const startTime = performance.now();
+    const controller = new AbortController();
+    setDbSaveAbortController(controller);
+
+    setDbSaveProgress({
+      stage: 'INICIANDO',
+      current: 0,
+      total: analysis.totalFound,
+      percentage: 2,
+      message: `Iniciando gravação de ${analysis.totalFound.toLocaleString('pt-BR')} registros no banco de dados...`,
+      speedRowsPerSec: 0,
+      elapsedSec: 0,
+    });
 
     try {
-      const record = await processImport(analysis, currentUser);
+      const record = await processImport(
+        analysis, 
+        currentUser,
+        (progress) => {
+          setDbSaveProgress(progress);
+        },
+        controller.signal
+      );
       
       const statusTitle = record.status === 'PARCIAL' 
         ? 'Importação Concluída com Inconformidades'
@@ -225,28 +255,35 @@ export const ImportView: React.FC = () => {
       setAnalysis(null);
     } catch (err: unknown) {
       console.error('Import save error:', err);
-      const failReason = err instanceof Error ? err.message : 'Falha ao sincronizar registros com o banco de dados.';
+      const isAborted = controller.signal.aborted;
+      const failReason = isAborted 
+        ? 'A gravação no banco de dados foi cancelada pelo usuário.'
+        : (err instanceof Error ? err.message : 'Falha ao sincronizar registros com o banco de dados.');
       
       recordFailedImport({
         fileName: analysis.fileName,
         totalFound: analysis.totalFound,
         motivo: `Falha na gravação do banco: ${failReason}`,
-        status: 'NAO_CONCLUIDA',
+        status: isAborted ? 'CANCELADA' : 'NAO_CONCLUIDA',
         usuario: currentUser.nome,
         duracaoMs: Math.round(performance.now() - startTime),
       });
 
       setUnfinishedStatus({
         fileName: analysis.fileName,
-        motivo: `A importação foi lida com sucesso, mas a gravação final no banco de dados não foi concluída: ${failReason}`,
-        status: 'NAO_CONCLUIDA',
+        motivo: `A leitura da planilha foi realizada com sucesso (${analysis.totalFound.toLocaleString('pt-BR')} registros), mas a gravação das informações no banco de dados NÃO foi concluída: ${failReason}`,
+        status: isAborted ? 'CANCELADA' : 'NAO_CONCLUIDA',
         timestamp: new Date().toISOString(),
         linhasLidas: analysis.totalFound,
+        stage: 'GRAVACAO_BANCO',
+        canRetrySave: true,
       });
 
       setErrorMsg(failReason);
     } finally {
       setIsSavingToDb(false);
+      setDbSaveProgress(null);
+      setDbSaveAbortController(null);
     }
   };
 
@@ -576,16 +613,118 @@ export const ImportView: React.FC = () => {
               <span className="text-rose-700 font-medium">Esta ocorrência foi salva no histórico de importações para fins de auditoria.</span>
             </div>
 
-            <button
-              onClick={() => {
-                setUnfinishedStatus(null);
-                if (fileInputRef.current) fileInputRef.current.click();
-              }}
-              className="inline-flex items-center gap-1 font-bold text-rose-700 hover:text-rose-900 hover:underline cursor-pointer"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>Tentar selecionar outro arquivo</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {unfinishedStatus.canRetrySave && analysis && (
+                <button
+                  onClick={handleConfirmImport}
+                  disabled={isSavingToDb}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-700 hover:bg-rose-800 text-white font-bold text-xs rounded-lg shadow-xs transition-all cursor-pointer active:scale-98"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Tentar Gravar no Banco Novamente</span>
+                </button>
+              )}
+
+              {analysis && (
+                <button
+                  onClick={handleDiscardAnalysis}
+                  disabled={isSavingToDb}
+                  className="px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors cursor-pointer"
+                >
+                  Descartar Prévia
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  setUnfinishedStatus(null);
+                  if (fileInputRef.current) fileInputRef.current.click();
+                }}
+                className="inline-flex items-center gap-1 font-bold text-rose-700 hover:text-rose-900 hover:underline cursor-pointer px-2 py-1 text-xs"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Selecionar outro arquivo</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REAL-TIME DATABASE SAVING PROGRESS MODAL */}
+      {isSavingToDb && dbSaveProgress && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl border border-blue-200 shadow-2xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-100 flex items-center justify-center text-blue-700">
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Gravando Informações no Banco de Dados
+                  </h3>
+                  <p className="text-xs text-slate-500 font-mono">
+                    {dbSaveProgress.stage === 'FIRESTORE' 
+                      ? 'Persistência no Firestore' 
+                      : (dbSaveProgress.stage === 'SUPABASE' 
+                        ? 'Sincronização com Supabase' 
+                        : 'Preparando registros')}
+                  </p>
+                </div>
+              </div>
+              <span className="text-base font-extrabold font-mono text-blue-700">
+                {dbSaveProgress.percentage}%
+              </span>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200">
+              <div 
+                className="h-full bg-linear-to-r from-blue-600 to-indigo-600 rounded-full transition-all duration-150 ease-out shadow-xs"
+                style={{ width: `${dbSaveProgress.percentage}%` }}
+              />
+            </div>
+
+            {/* Status message */}
+            <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl text-xs text-blue-900 font-medium leading-relaxed">
+              {dbSaveProgress.message}
+            </div>
+
+            {/* Stats row */}
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                <span className="text-[10px] text-slate-400 block font-semibold uppercase">Pedidos</span>
+                <span className="font-bold font-mono text-slate-800">
+                  {dbSaveProgress.current.toLocaleString('pt-BR')} / {dbSaveProgress.total.toLocaleString('pt-BR')}
+                </span>
+              </div>
+              <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                <span className="text-[10px] text-slate-400 block font-semibold uppercase">Velocidade</span>
+                <span className="font-bold font-mono text-emerald-700">
+                  {dbSaveProgress.speedRowsPerSec ? `⚡ ~${dbSaveProgress.speedRowsPerSec.toLocaleString('pt-BR')} ped/s` : 'Calculando...'}
+                </span>
+              </div>
+              <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                <span className="text-[10px] text-slate-400 block font-semibold uppercase">Tempo</span>
+                <span className="font-bold font-mono text-slate-800">
+                  ⏱ {dbSaveProgress.elapsedSec || 0}s
+                </span>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="pt-2 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500">
+                Lote {dbSaveProgress.currentBatch || 1} de {dbSaveProgress.totalBatches || 1}
+              </span>
+              <button
+                type="button"
+                onClick={handleCancelDbSave}
+                className="px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancelar Gravação
+              </button>
+            </div>
           </div>
         </div>
       )}

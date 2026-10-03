@@ -21,7 +21,7 @@ import {
 } from './mockData';
 import { parseHistoryToEvents } from '../utils/historyParser';
 import { ImportAnalysis } from '../utils/spreadsheet';
-import { dbSync } from './dbSync';
+import { dbSync, DatabaseSaveProgress } from './dbSync';
 import { CANONICAL_UNITS, cleanUnitName } from '../utils/unitNormalizer';
 import { idbGet, idbSet } from '../utils/indexedDb';
 import { computeRealisticItemCount } from '../utils/itemQuantity';
@@ -337,12 +337,24 @@ class AppStore {
 
   private save(key: string, data: unknown) {
     if (key === STORAGE_KEYS.ORDERS && Array.isArray(data)) {
+      // IndexedDB handles the full dataset (3,000 - 10,000+ orders) asynchronously without thread lock
       idbSet(key, data).catch(err => console.warn('IndexedDB save orders note:', err));
+      try {
+        if (data.length > 300) {
+          // Store a lightweight cache slice in localStorage to prevent 5MB QuotaExceededError and 500ms freeze
+          localStorage.setItem(key, JSON.stringify(data.slice(0, 250)));
+        } else {
+          localStorage.setItem(key, JSON.stringify(data));
+        }
+      } catch (e) {
+        // Safe: data is fully preserved in IndexedDB
+      }
+      return;
     }
     try {
       localStorage.setItem(key, JSON.stringify(data));
     } catch (e) {
-      console.warn('Storage save note (data safely preserved in IndexedDB):', e);
+      console.warn('Storage save note:', e);
     }
   }
 
@@ -642,7 +654,12 @@ class AppStore {
   }
 
   // Process Import idempotently and feed the database directly
-  public async processImport(analysis: ImportAnalysis, responsavel?: string | UserProfile): Promise<ImportRecord> {
+  public async processImport(
+    analysis: ImportAnalysis, 
+    responsavel?: string | UserProfile,
+    onDbProgress?: (progress: DatabaseSaveProgress) => void,
+    signal?: AbortSignal
+  ): Promise<ImportRecord> {
     const now = new Date().toISOString();
     const importId = `imp-${Date.now()}`;
     const userNome = typeof responsavel === 'object' && responsavel !== null ? responsavel.nome : (responsavel || this.currentUser.nome);
@@ -653,6 +670,7 @@ class AppStore {
     let errorCount = 0;
 
     const affectedOrders: Order[] = [];
+    const modifiedOrders: Order[] = [];
     const newAuditLogs: AuditLog[] = [];
 
     // O(1) Fast lookup index by code to eliminate quadratic O(N^2) lag on 3,000+ orders
@@ -869,9 +887,10 @@ class AppStore {
         if (hasChanged) {
           updateCount++;
           affectedOrders.push(current);
+          modifiedOrders.push(current);
         } else {
           unchangedCount++;
-          // Still ensure database has current state
+          // Still track for local state
           affectedOrders.push(current);
         }
       }
@@ -912,11 +931,53 @@ class AppStore {
     this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
     this.save(STORAGE_KEYS.AUDIT, this.auditLogs);
     
-    // DIRECTLY FEED THE DATABASE (Firestore & Supabase)
+    // Select records to persist to remote database:
+    // If only specific rows are new or changed, persist only them for maximum speed.
+    // If all rows are new (e.g. initial upload of 3,500 rows) or full sync needed, persist all.
+    const ordersToPersistInDatabase = (newOrdersToPrepend.length > 0 || modifiedOrders.length > 0)
+      ? [...newOrdersToPrepend, ...modifiedOrders]
+      : (this.orders.length <= analysis.totalFound ? affectedOrders : []);
+
+    // DIRECTLY FEED THE DATABASE (Firestore & Supabase) with real-time progress and cancellation
+    let isDbSuccess = false;
+    let isDbPartial = false;
+    let actualSavedCount = 0;
+    let dbErrorMsg: string | undefined = undefined;
+
     try {
-      await dbSync.saveImportedData(affectedOrders, record, newAuditLogs);
-    } catch (e) {
+      const dbResult = await dbSync.saveImportedData(
+        ordersToPersistInDatabase, 
+        record, 
+        newAuditLogs, 
+        onDbProgress, 
+        signal
+      );
+      isDbSuccess = dbResult.success;
+      isDbPartial = Boolean(dbResult.partial);
+      actualSavedCount = dbResult.count;
+      if (!dbResult.success) {
+        dbErrorMsg = dbResult.error || 'Falha ao persistir registros no banco de dados.';
+      }
+    } catch (e: any) {
       console.warn('Erro ao alimentar banco de dados na importação:', e);
+      dbErrorMsg = e?.message || 'Falha de comunicação durante gravação no banco de dados.';
+    }
+
+    if (!isDbSuccess) {
+      record.status = 'NAO_CONCLUIDA';
+      record.motivo_status = `Gravação no banco de dados NÃO foi concluída: ${dbErrorMsg}. Foram gravados ${actualSavedCount} de ${ordersToPersistInDatabase.length} pedidos.`;
+      this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
+      this.notify();
+      throw new Error(record.motivo_status);
+    } else if (isDbPartial || record.status === 'PARCIAL') {
+      record.status = 'PARCIAL';
+      record.motivo_status = `Concluída parcialmente: ${actualSavedCount} pedidos gravados no banco de dados. ${record.erros > 0 ? `${record.erros} com erro na planilha.` : ''}`;
+      this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
+      this.notify();
+    } else {
+      record.status = 'CONCLUIDA';
+      this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
+      this.notify();
     }
 
     this.notify();
