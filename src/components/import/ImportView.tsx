@@ -44,8 +44,25 @@ export const ImportView: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSavingToDb, setIsSavingToDb] = useState(false);
+  const [saveElapsedSec, setSaveElapsedSec] = useState(0);
   const [dbSaveProgress, setDbSaveProgress] = useState<DatabaseSaveProgress | null>(null);
   const [dbSaveAbortController, setDbSaveAbortController] = useState<AbortController | null>(null);
+
+  // Active 1-second timer during database saving
+  React.useEffect(() => {
+    let interval: any = null;
+    if (isSavingToDb) {
+      setSaveElapsedSec(0);
+      interval = setInterval(() => {
+        setSaveElapsedSec(s => s + 1);
+      }, 1000);
+    } else {
+      setSaveElapsedSec(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isSavingToDb]);
   const [isCleanModalOpen, setIsCleanModalOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -707,7 +724,7 @@ export const ImportView: React.FC = () => {
               <div className="p-2 bg-slate-50 rounded-lg border border-slate-100">
                 <span className="text-[10px] text-slate-400 block font-semibold uppercase">Tempo</span>
                 <span className="font-bold font-mono text-slate-800">
-                  ⏱ {dbSaveProgress.elapsedSec || 0}s
+                  ⏱ {saveElapsedSec}s
                 </span>
               </div>
             </div>

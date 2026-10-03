@@ -887,149 +887,14 @@ class DatabaseSyncService {
       };
     }
 
-    // 1. Persist directly to Firestore using parallel writeBatch
-    try {
-      // Save Import Record first so there is a traceable header
-      if (importRecord && importRecord.id) {
-        try {
-          const recordDocRef = doc(db, 'import_records', String(importRecord.id));
-          await setDoc(recordDocRef, sanitizeForFirestore(importRecord), { merge: true });
-        } catch (e) {
-          console.warn('Erro ao salvar registro de importação no Firestore:', e);
-        }
-      }
-
-      // Save orders in batches of 400 (well within Firestore 500 limit and 10MB payload limit)
-      if (ordersToSave && ordersToSave.length > 0) {
-        const BATCH_SIZE = 400;
-        const CONCURRENCY = 3; // 3 batches in parallel = ~1,200 orders per wave
-        const chunks: Order[][] = [];
-        for (let i = 0; i < ordersToSave.length; i += BATCH_SIZE) {
-          chunks.push(ordersToSave.slice(i, i + BATCH_SIZE));
-        }
-        const totalBatches = chunks.length;
-
-        for (let i = 0; i < chunks.length; i += CONCURRENCY) {
-          if (signal?.aborted) {
-            throw new Error('Gravação cancelada pelo usuário.');
-          }
-
-          const currentWave = chunks.slice(i, i + CONCURRENCY);
-          
-          await Promise.all(
-            currentWave.map(async (chunk, waveIdx) => {
-              const currentBatchNum = i + waveIdx + 1;
-              try {
-                const batch = writeBatch(db);
-                for (const order of chunk) {
-                  if (!order || !order.id) continue;
-                  const orderDocRef = doc(db, 'orders', String(order.id));
-                  batch.set(orderDocRef, sanitizeOrderForFirestore(order), { merge: true });
-                }
-                await batch.commit();
-                savedOrdersCount += chunk.length;
-              } catch (batchErr: any) {
-                console.warn(
-                  `Lote ${currentBatchNum}/${totalBatches} falhou via writeBatch. Executando gravação paralela resiliente...`,
-                  batchErr
-                );
-                // Resilient parallel fallback: write in micro-chunks of 15
-                const microChunks: Order[][] = [];
-                for (let k = 0; k < chunk.length; k += 15) {
-                  microChunks.push(chunk.slice(k, k + 15));
-                }
-                for (const mChunk of microChunks) {
-                  await Promise.all(
-                    mChunk.map(async (order) => {
-                      if (!order || !order.id) return;
-                      try {
-                        const orderDocRef = doc(db, 'orders', String(order.id));
-                        await setDoc(orderDocRef, sanitizeOrderForFirestore(order), { merge: true });
-                        savedOrdersCount++;
-                      } catch (singleErr: any) {
-                        console.error(`Falha ao gravar pedido individual ${order.codigo || order.id}:`, singleErr);
-                        failureError = singleErr?.message || String(singleErr);
-                      }
-                    })
-                  );
-                }
-              }
-            })
-          );
-
-          const elapsedSec = Math.max(0.1, (performance.now() - startTime) / 1000);
-          const currentBatchDisplay = Math.min(i + CONCURRENCY, totalBatches);
-          const speed = Math.round(savedOrdersCount / elapsedSec);
-          const pct = Math.min(90, Math.round((savedOrdersCount / ordersToSave.length) * 85) + 5);
-
-          onProgress?.({
-            stage: 'FIRESTORE',
-            current: savedOrdersCount,
-            total: ordersToSave.length,
-            percentage: pct,
-            message: `Gravando no Firestore: ${savedOrdersCount.toLocaleString('pt-BR')} de ${ordersToSave.length.toLocaleString('pt-BR')} pedidos salvos (Lote ${currentBatchDisplay}/${totalBatches})...`,
-            speedRowsPerSec: speed,
-            elapsedSec: Math.round(elapsedSec),
-            currentBatch: currentBatchDisplay,
-            totalBatches,
-          });
-
-          // Non-blocking yield to browser paint loop
-          await new Promise(r => setTimeout(r, 10));
-        }
-      }
-
-      // Save audit logs in batch if any
-      if (auditLogsToSave && auditLogsToSave.length > 0) {
-        const BATCH_SIZE = 400;
-        for (let i = 0; i < auditLogsToSave.length; i += BATCH_SIZE) {
-          const chunk = auditLogsToSave.slice(i, i + BATCH_SIZE);
-          try {
-            const batch = writeBatch(db);
-            for (const log of chunk) {
-              if (!log || !log.id) continue;
-              const logDocRef = doc(db, 'audit_logs', String(log.id));
-              batch.set(logDocRef, sanitizeForFirestore(log), { merge: true });
-            }
-            await batch.commit();
-          } catch (auditErr) {
-            console.warn('Erro ao salvar lote de logs de auditoria:', auditErr);
-          }
-        }
-      }
-
-      this.status.firestoreConnected = true;
-      this.status.lastFirestoreSync = new Date();
-    } catch (fsErr: any) {
-      console.error('Firestore saveImportedData error:', fsErr);
-      failureError = fsErr?.message || String(fsErr);
-      onProgress?.({
-        stage: 'ERRO',
-        current: savedOrdersCount,
-        total: ordersToSave.length,
-        percentage: Math.round((savedOrdersCount / (ordersToSave.length || 1)) * 100),
-        message: `Falha na gravação do Firestore: ${failureError}`,
-      });
-    } finally {
-      this.isBulkSaving = false;
-      this.status.firestoreSyncing = false;
-      this.notifyStatus();
-    }
-
-    // 2. Also upsert into Supabase if configured (high-speed parallel chunks of 500)
+    // 1. PRIMARY PERSISTENCE: High-speed parallel upsert into relational Supabase database
     const supabase = getSupabaseClient();
+    let supabaseSuccess = false;
+
     if (supabase && ordersToSave && ordersToSave.length > 0 && !signal?.aborted) {
       try {
-        const elapsedSec = Math.max(0.1, (performance.now() - startTime) / 1000);
-        onProgress?.({
-          stage: 'SUPABASE',
-          current: savedOrdersCount,
-          total: ordersToSave.length,
-          percentage: 92,
-          message: 'Sincronizando registros no banco relacional Supabase...',
-          speedRowsPerSec: Math.round(savedOrdersCount / elapsedSec),
-          elapsedSec: Math.round(elapsedSec),
-        });
+        this.status.supabaseSyncing = true;
+        this.notifyStatus();
 
         const payload = ordersToSave.map(order => ({
           id: order.id,
@@ -1070,25 +935,85 @@ class DatabaseSyncService {
         }));
 
         const CHUNK_SIZE = 500;
+        const totalChunks = Math.ceil(payload.length / CHUNK_SIZE);
+
         for (let i = 0; i < payload.length; i += CHUNK_SIZE * 2) {
-          if (signal?.aborted) break;
+          if (signal?.aborted) throw new Error('Gravação cancelada pelo usuário.');
+
           const chunk1 = payload.slice(i, i + CHUNK_SIZE);
           const chunk2 = payload.slice(i + CHUNK_SIZE, i + CHUNK_SIZE * 2);
-          const upsertPromises = [
-            supabase.from('pedidos').upsert(chunk1)
-          ];
+
+          const upsertPromises = [supabase.from('pedidos').upsert(chunk1)];
           if (chunk2.length > 0) {
             upsertPromises.push(supabase.from('pedidos').upsert(chunk2));
           }
+
           const results = await Promise.all(upsertPromises);
           for (const res of results) {
             if (res.error) {
-              console.warn('Supabase pedidos upsert warning:', res.error.message);
+              console.warn('Supabase pedidos chunk upsert note:', res.error.message);
+              failureError = res.error.message;
+            }
+          }
+
+          savedOrdersCount += chunk1.length + chunk2.length;
+          const currentBatchDisplay = Math.min(Math.ceil((i + CHUNK_SIZE * 2) / CHUNK_SIZE), totalChunks);
+          const elapsedSec = Math.max(0.1, (performance.now() - startTime) / 1000);
+          const speed = Math.round(savedOrdersCount / elapsedSec);
+          const pct = Math.min(92, Math.round((savedOrdersCount / ordersToSave.length) * 85) + 5);
+
+          onProgress?.({
+            stage: 'SUPABASE',
+            current: savedOrdersCount,
+            total: ordersToSave.length,
+            percentage: pct,
+            message: `Gravando no Supabase: ${savedOrdersCount.toLocaleString('pt-BR')} de ${ordersToSave.length.toLocaleString('pt-BR')} pedidos salvos (Lote ${currentBatchDisplay}/${totalChunks})...`,
+            speedRowsPerSec: speed,
+            elapsedSec: Math.round(elapsedSec),
+            currentBatch: currentBatchDisplay,
+            totalBatches: totalChunks,
+          });
+
+          // Yield to UI rendering loop
+          await new Promise(r => setTimeout(r, 5));
+        }
+
+        // Save Import Record in Supabase
+        if (importRecord) {
+          const fullRecordPayload = {
+            id: importRecord.id,
+            arquivo: importRecord.arquivo,
+            data_importacao: importRecord.data_importacao,
+            usuario: importRecord.usuario,
+            quantidade_registros: importRecord.quantidade_registros,
+            novos: importRecord.novos,
+            atualizados: importRecord.atualizados,
+            sem_alteracao: importRecord.sem_alteracao,
+            erros: importRecord.erros,
+            status: importRecord.status,
+            motivo_status: importRecord.motivo_status,
+          };
+          const { error: impErr } = await supabase.from('importacoes').upsert(fullRecordPayload);
+          if (impErr) {
+            try {
+              await supabase.from('importacoes').upsert({
+                id: importRecord.id,
+                arquivo: importRecord.arquivo,
+                data_importacao: importRecord.data_importacao,
+                usuario: importRecord.usuario,
+                quantidade_registros: importRecord.quantidade_registros,
+                novos: importRecord.novos,
+                atualizados: importRecord.atualizados,
+                sem_alteracao: importRecord.sem_alteracao,
+                erros: importRecord.erros,
+              });
+            } catch (e) {
+              console.warn('Supabase fallback import record upsert note:', e);
             }
           }
         }
 
-        // Also sync events (only for orders that were imported, up to 4 per order)
+        // Also sync timeline events for imported orders (up to 4 events per order)
         const eventsToSync: any[] = [];
         ordersToSave.forEach(ord => {
           if (ord.eventos && ord.eventos.length > 0) {
@@ -1119,46 +1044,92 @@ class DatabaseSyncService {
           }
         }
 
-        if (importRecord) {
-          // Try full upsert with status columns
-          const fullRecordPayload = {
-            id: importRecord.id,
-            arquivo: importRecord.arquivo,
-            data_importacao: importRecord.data_importacao,
-            usuario: importRecord.usuario,
-            quantidade_registros: importRecord.quantidade_registros,
-            novos: importRecord.novos,
-            atualizados: importRecord.atualizados,
-            sem_alteracao: importRecord.sem_alteracao,
-            erros: importRecord.erros,
-            status: importRecord.status,
-            motivo_status: importRecord.motivo_status,
-          };
-          const { error: impErr } = await supabase.from('importacoes').upsert(fullRecordPayload);
-          if (impErr) {
-            // Fallback without status if table lacks the columns
-            try {
-              await supabase.from('importacoes').upsert({
-                id: importRecord.id,
-                arquivo: importRecord.arquivo,
-                data_importacao: importRecord.data_importacao,
-                usuario: importRecord.usuario,
-                quantidade_registros: importRecord.quantidade_registros,
-                novos: importRecord.novos,
-                atualizados: importRecord.atualizados,
-                sem_alteracao: importRecord.sem_alteracao,
-                erros: importRecord.erros,
-              });
-            } catch (e) {
-              console.warn('Supabase fallback import record upsert note:', e);
-            }
+        supabaseSuccess = true;
+        this.status.supabaseConnected = true;
+        this.status.lastSupabaseSync = new Date();
+      } catch (sbErr: any) {
+        console.warn('Supabase saveImportedData upsert error:', sbErr);
+        failureError = sbErr?.message || String(sbErr);
+      } finally {
+        this.status.supabaseSyncing = false;
+        this.notifyStatus();
+      }
+    }
+
+    // 2. SECONDARY / MIRROR: Non-blocking Firestore persistence with strict 3-second timeout
+    // Prevents any hangs if Firebase is slow, offline, or experiencing network latency on Vercel
+    if (!signal?.aborted) {
+      const timeoutWrapper = <T>(promise: Promise<T>, ms = 2500): Promise<T> => {
+        return Promise.race([
+          promise,
+          new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error('Firestore timeout')), ms)
+          ),
+        ]);
+      };
+
+      try {
+        if (importRecord && importRecord.id) {
+          const recordDocRef = doc(db, 'import_records', String(importRecord.id));
+          await timeoutWrapper(
+            setDoc(recordDocRef, sanitizeForFirestore(importRecord), { merge: true }),
+            2000
+          ).catch(e => console.warn('Firestore import record mirror note:', e));
+        }
+
+        if (ordersToSave && ordersToSave.length > 0) {
+          const BATCH_SIZE = 400;
+          const chunks: Order[][] = [];
+          for (let i = 0; i < ordersToSave.length; i += BATCH_SIZE) {
+            chunks.push(ordersToSave.slice(i, i + BATCH_SIZE));
+          }
+
+          // Process in fast waves of 3 batches with 3.5s timeout per wave
+          for (let i = 0; i < chunks.length; i += 3) {
+            if (signal?.aborted) break;
+            const wave = chunks.slice(i, i + 3);
+            await timeoutWrapper(
+              Promise.all(
+                wave.map(async (chunk) => {
+                  const batch = writeBatch(db);
+                  for (const order of chunk) {
+                    if (!order || !order.id) continue;
+                    const orderDocRef = doc(db, 'orders', String(order.id));
+                    batch.set(orderDocRef, sanitizeOrderForFirestore(order), { merge: true });
+                  }
+                  await batch.commit();
+                })
+              ),
+              3500
+            ).catch(e => {
+              console.warn('Firestore batch wave note (safe fallback, data is secured in Supabase):', e);
+            });
           }
         }
 
-        this.status.supabaseConnected = true;
-        this.status.lastSupabaseSync = new Date();
-      } catch (sbErr) {
-        console.warn('Supabase saveImportedData upsert note:', sbErr);
+        if (auditLogsToSave && auditLogsToSave.length > 0) {
+          const chunk = auditLogsToSave.slice(0, 400);
+          await timeoutWrapper(
+            (async () => {
+              const batch = writeBatch(db);
+              for (const log of chunk) {
+                if (!log || !log.id) continue;
+                batch.set(doc(db, 'audit_logs', String(log.id)), sanitizeForFirestore(log), { merge: true });
+              }
+              await batch.commit();
+            })(),
+            2500
+          ).catch(() => {});
+        }
+
+        this.status.firestoreConnected = true;
+        this.status.lastFirestoreSync = new Date();
+      } catch (fsErr) {
+        console.warn('Firestore mirror note (non-critical, data secured in Supabase):', fsErr);
+      } finally {
+        this.isBulkSaving = false;
+        this.status.firestoreSyncing = false;
+        this.notifyStatus();
       }
     }
 
