@@ -235,8 +235,16 @@ CREATE TABLE IF NOT EXISTS public.importacoes (
   atualizados INTEGER DEFAULT 0,
   sem_alteracao INTEGER DEFAULT 0,
   erros INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'CONCLUIDA',
+  motivo_status TEXT,
+  tempo_processamento_ms INTEGER,
   criado_em TIMESTAMPTZ DEFAULT now()
 );
+
+-- Migração não-destrutiva caso a tabela já tenha sido criada anteriormente
+ALTER TABLE public.importacoes ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'CONCLUIDA';
+ALTER TABLE public.importacoes ADD COLUMN IF NOT EXISTS motivo_status TEXT;
+ALTER TABLE public.importacoes ADD COLUMN IF NOT EXISTS tempo_processamento_ms INTEGER;
 
 -- 6. Tabela de Logs de Auditoria
 CREATE TABLE IF NOT EXISTS public.logs_auditoria (
