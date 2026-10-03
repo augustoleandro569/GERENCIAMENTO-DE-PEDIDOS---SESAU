@@ -80,3 +80,41 @@
   background: #94a3b8;
 }
 
+/* Print Styles for Consolidated Executive Reports */
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Hide app navigation, headers, sidebars and action buttons */
+  header, 
+  aside, 
+  nav, 
+  .no-print, 
+  button, 
+  .interactive-btn {
+    display: none !important;
+  }
+
+  /* Ensure report pages break cleanly across A4 sheets */
+  .report-page {
+    box-shadow: none !important;
+    border: none !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    margin: 0 auto !important;
+    padding: 20mm !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    min-height: 100vh !important;
+  }
+
+  .report-page:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+}
+
