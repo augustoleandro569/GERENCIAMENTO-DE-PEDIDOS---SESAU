@@ -76,10 +76,25 @@ CANONICAL_UNITS.forEach(u => {
   CANONICAL_MAP.set(u.nome.toUpperCase(), u);
 });
 
+// Fast in-memory caches for batch processing of large spreadsheets (3,000+ rows)
+const unitSiglaCache = new Map<string, string>();
+const unitFullNameCache = new Map<string, string>();
+
 // Maps dirty strings and variants to the canonical sigla
 export function cleanUnitSigla(raw: string): string {
   if (!raw) return 'HGE';
   const trimmed = raw.trim();
+  if (!trimmed) return 'HGE';
+
+  const cached = unitSiglaCache.get(trimmed);
+  if (cached !== undefined) return cached;
+
+  const result = resolveCleanUnitSigla(trimmed);
+  unitSiglaCache.set(trimmed, result);
+  return result;
+}
+
+function resolveCleanUnitSigla(trimmed: string): string {
   const upper = trimmed.toUpperCase();
 
   const MEASURE_UNITS = new Set([
@@ -315,6 +330,15 @@ export function getUnitFullName(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return 'Hospital Geral do Estado Dr. Osvaldo Brandão Vilela';
 
+  const cached = unitFullNameCache.get(trimmed);
+  if (cached !== undefined) return cached;
+
+  const result = resolveUnitFullName(trimmed);
+  unitFullNameCache.set(trimmed, result);
+  return result;
+}
+
+function resolveUnitFullName(trimmed: string): string {
   const MEASURE_UNITS = new Set([
     'UND', 'UN', 'UNID', 'CX', 'CXS', 'CAIXA', 'CAIXAS', 'FR', 'FRASCO', 'FRASCOS',
     'AMP', 'AMPOLA', 'AMPOLAS', 'PCT', 'PACOTE', 'PACOTES', 'COMP', 'COMPRIMIDO',

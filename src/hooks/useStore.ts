@@ -34,6 +34,7 @@ export function useStore() {
     updateOrder: store.updateOrder.bind(store),
     updateOperationalStatus: store.updateOperationalStatus.bind(store),
     processImport: store.processImport.bind(store),
+    recordFailedImport: store.recordFailedImport.bind(store),
     addSchedule: store.addSchedule.bind(store),
     addSchedules: store.addSchedules.bind(store),
     updateSchedule: store.updateSchedule.bind(store),

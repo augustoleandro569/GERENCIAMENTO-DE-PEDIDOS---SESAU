@@ -5,6 +5,7 @@ import {
   Program,
   RequestTypeConfig,
   ImportRecord,
+  ImportStatus,
   AuditLog,
   UserProfile,
   SystemSettings,
@@ -654,6 +655,16 @@ class AppStore {
     const affectedOrders: Order[] = [];
     const newAuditLogs: AuditLog[] = [];
 
+    // O(1) Fast lookup index by code to eliminate quadratic O(N^2) lag on 3,000+ orders
+    const existingOrdersByCode = new Map<string, Order>();
+    this.orders.forEach(o => {
+      if (o.codigo) {
+        existingOrdersByCode.set(o.codigo.toUpperCase(), o);
+      }
+    });
+
+    const newOrdersToPrepend: Order[] = [];
+
     for (const item of analysis.items) {
       if (item.action === 'ERRO' || !item.row) {
         errorCount++;
@@ -676,8 +687,8 @@ class AppStore {
       }
       row.codigo = code;
 
-      // Strict uniqueness: if code already exists in memory, treat as update to prevent any duplicate
-      const existingInOrders = this.orders.find(o => o.codigo.toUpperCase() === code);
+      // Fast O(1) check: if code already exists in memory or in batch, treat as update to prevent duplicate
+      const existingInOrders = existingOrdersByCode.get(code);
       if (item.action === 'NOVO' && existingInOrders) {
         item.action = 'ATUALIZAR';
       }
@@ -735,10 +746,11 @@ class AppStore {
           eventos: parsedEvents,
         };
 
-        this.orders.unshift(newOrder);
+        newOrdersToPrepend.push(newOrder);
+        existingOrdersByCode.set(code, newOrder);
         affectedOrders.push(newOrder);
       } else if (item.action === 'ATUALIZAR' || item.action === 'SEM_ALTERACAO') {
-        const current = this.orders.find(o => o.codigo === row.codigo);
+        const current = existingOrdersByCode.get(row.codigo.toUpperCase());
         if (!current) continue;
 
         let hasChanged = false;
@@ -865,6 +877,21 @@ class AppStore {
       }
     }
 
+    // Prepend all new orders in a single fast operation
+    if (newOrdersToPrepend.length > 0) {
+      this.orders = [...newOrdersToPrepend, ...this.orders];
+    }
+
+    const isNonConcluded = (newCount === 0 && updateCount === 0 && unchangedCount === 0) || (errorCount >= analysis.totalFound);
+    const isPartial = errorCount > 0 && !isNonConcluded;
+    const importStatus: ImportStatus = isNonConcluded ? 'NAO_CONCLUIDA' : (isPartial ? 'PARCIAL' : 'CONCLUIDA');
+    
+    const motivoStatus = isNonConcluded
+      ? `Importação não concluída: Todos os ${errorCount} registros continham erros de formatação ou não seguiam o padrão SOL-2026.`
+      : (isPartial 
+          ? `Concluída parcialmente: ${newCount} novos, ${updateCount} atualizados e ${errorCount} pedidos com erro.`
+          : `Concluída com sucesso (${analysis.totalFound} pedidos sincronizados).`);
+
     const record: ImportRecord = {
       id: importId,
       arquivo: analysis.fileName,
@@ -875,6 +902,9 @@ class AppStore {
       atualizados: updateCount,
       sem_alteracao: unchangedCount,
       erros: errorCount,
+      status: importStatus,
+      motivo_status: motivoStatus,
+      tempo_processamento_ms: analysis.tempoProcessamentoMs,
     };
 
     this.importRecords.unshift(record);
@@ -890,6 +920,39 @@ class AppStore {
     }
 
     this.notify();
+    return record;
+  }
+
+  // Record an import that failed, was cancelled, or could not be concluded
+  public recordFailedImport(params: {
+    fileName: string;
+    totalFound?: number;
+    motivo: string;
+    status?: ImportStatus;
+    usuario?: string;
+    duracaoMs?: number;
+  }): ImportRecord {
+    const now = new Date().toISOString();
+    const importId = `imp-${Date.now()}`;
+    const record: ImportRecord = {
+      id: importId,
+      arquivo: params.fileName,
+      data_importacao: now,
+      usuario: params.usuario || this.currentUser.nome,
+      quantidade_registros: params.totalFound || 0,
+      novos: 0,
+      atualizados: 0,
+      sem_alteracao: 0,
+      erros: params.totalFound || 0,
+      status: params.status || 'NAO_CONCLUIDA',
+      motivo_status: params.motivo,
+      tempo_processamento_ms: params.duracaoMs,
+    };
+
+    this.importRecords.unshift(record);
+    this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
+    this.notify();
+    dbSync.saveImportRecord(record).catch(e => console.warn('Erro ao salvar registro de importação não concluída no banco:', e));
     return record;
   }
 

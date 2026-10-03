@@ -153,6 +153,8 @@ export interface RequestTypeConfig {
   ativo: boolean;
 }
 
+export type ImportStatus = 'CONCLUIDA' | 'NAO_CONCLUIDA' | 'PARCIAL' | 'CANCELADA';
+
 export interface ImportRecord {
   id: string;
   arquivo: string;
@@ -163,6 +165,9 @@ export interface ImportRecord {
   atualizados: number;
   sem_alteracao: number;
   erros: number;
+  status?: ImportStatus;
+  motivo_status?: string;
+  tempo_processamento_ms?: number;
 }
 
 export interface AuditLog {

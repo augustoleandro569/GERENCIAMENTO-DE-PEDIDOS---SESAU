@@ -48,6 +48,21 @@ export interface ImportDiffItem {
   errorMessage?: string;
 }
 
+export interface ImportProgress {
+  stage: 'LENDO_ARQUIVO' | 'IDENTIFICANDO_COLUNAS' | 'PROCESSANDO_LINHAS' | 'FINALIZANDO' | 'ERRO';
+  message: string;
+  current: number;
+  total: number;
+  percentage: number;
+  sheetName?: string;
+  speedRowsPerSec?: number;
+}
+
+export interface ParseOptions {
+  onProgress?: (progress: ImportProgress) => void;
+  signal?: AbortSignal;
+}
+
 export interface ImportAnalysis {
   fileName: string;
   totalFound: number;
@@ -59,6 +74,9 @@ export interface ImportAnalysis {
   detectedConfidence?: 'ALTA' | 'MÉDIA' | 'BAIXA';
   statusBreakdown?: Record<string, number>;
   items: ImportDiffItem[];
+  tempoProcessamentoMs?: number;
+  isComplete?: boolean;
+  incompleteReason?: string;
 }
 
 // Units of measure to reject from hospital unit detection
@@ -116,11 +134,22 @@ function parseQuantitySafe(val: unknown): number {
  * EM SEPARAÇÃO, AGUARDANDO CONFERENCIA, EM CONFERENCIA, EXPEDIDA, EM TRANSPORTE,
  * ENTREGUE, ENTREGUE PARCIALMENTE, CANCELADO.
  */
+const orderStatusCache = new Map<string, OrderStatus>();
+
 export function normalizeOrderStatus(val: unknown): OrderStatus {
   if (val === null || val === undefined) return 'Aguardando Validação';
   const str = String(val).trim();
   if (!str) return 'Aguardando Validação';
 
+  const cached = orderStatusCache.get(str);
+  if (cached !== undefined) return cached;
+
+  const result = resolveOrderStatus(str);
+  orderStatusCache.set(str, result);
+  return result;
+}
+
+function resolveOrderStatus(str: string): OrderStatus {
   const clean = str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
   const lower = clean.toLowerCase();
 
@@ -659,14 +688,27 @@ function detectSheetColumns(rawRows: unknown[][], fallbackMapping?: SheetColumnM
  * 4. Brazilian CSV encoding & delimiter support (; and ,).
  * 5. Complete status fidelity: RASCUNHO, AGUARDANDO VALIDAÇÃO, APROVADO, AGUARDANDO SEPARAÇÃO, EM SEPARAÇÃO, AGUARDANDO CONFERENCIA, EM CONFERENCIA, EXPEDIDA, EM TRANSPORTE, ENTREGUE, ENTREGUE PARCIALMENTE, CANCELADO.
  */
-export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
+export async function parseSpreadsheetFile(file: File, options?: ParseOptions): Promise<ParsedRow[]> {
   const fileName = file.name.toLowerCase();
+  const startTime = performance.now();
+
+  options?.onProgress?.({
+    stage: 'LENDO_ARQUIVO',
+    message: `Lendo estrutura do arquivo ${file.name}...`,
+    current: 0,
+    total: 100,
+    percentage: 5,
+  });
 
   if (fileName.endsWith('.pdf')) {
     return parsePdfReport(file);
   }
 
   const arrayBuffer = await file.arrayBuffer();
+  if (options?.signal?.aborted) {
+    throw new Error('Importação cancelada pelo operador.');
+  }
+
   let workbook: XLSX.WorkBook;
 
   if (fileName.endsWith('.csv') || fileName.endsWith('.txt')) {
@@ -684,38 +726,63 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true, raw: false });
   }
 
-  // Ensure full sheet range is decoded for all sheets, even if export metadata !ref was truncated
+  if (options?.signal?.aborted) {
+    throw new Error('Importação cancelada pelo operador.');
+  }
+
+  // Calculate estimated total rows across sheets for progress reporting
+  let totalEstimatedRows = 0;
   for (const name of workbook.SheetNames) {
     const ws = workbook.Sheets[name];
     if (ws) {
-      let maxR = 0;
-      let maxC = 0;
-      for (const cellKey in ws) {
-        if (cellKey[0] === '!') continue;
-        try {
-          const cellCoord = XLSX.utils.decode_cell(cellKey);
-          if (cellCoord.r > maxR) maxR = cellCoord.r;
-          if (cellCoord.c > maxC) maxC = cellCoord.c;
-        } catch {
-          // ignore
-        }
+      const curRef = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
+      if (curRef) {
+        totalEstimatedRows += Math.max(0, curRef.e.r - curRef.s.r);
       }
-      if (maxR > 0) {
-        const curRef = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
-        if (!curRef || curRef.e.r < maxR) {
+      // If !ref is suspiciously small (< 100) or missing, scan to find actual max row
+      if (!curRef || curRef.e.r < 100) {
+        let maxR = 0;
+        let maxC = 0;
+        for (const cellKey in ws) {
+          if (cellKey[0] === '!') continue;
+          try {
+            const cellCoord = XLSX.utils.decode_cell(cellKey);
+            if (cellCoord.r > maxR) maxR = cellCoord.r;
+            if (cellCoord.c > maxC) maxC = cellCoord.c;
+          } catch {
+            // ignore
+          }
+        }
+        if (maxR > 0) {
           ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: Math.max(maxC, curRef?.e.c || 0) } });
+          totalEstimatedRows = Math.max(totalEstimatedRows, maxR);
         }
       }
     }
   }
 
+  if (totalEstimatedRows === 0) totalEstimatedRows = 1000;
+
+  options?.onProgress?.({
+    stage: 'IDENTIFICANDO_COLUNAS',
+    message: `Mapeando colunas e abas (${workbook.SheetNames.length} aba(s) detectadas)...`,
+    current: 0,
+    total: totalEstimatedRows,
+    percentage: 15,
+  });
+
   const codeOccurrences = new Map<string, number>();
   const rowsList: ParsedRow[] = [];
   let primaryMapping: SheetColumnMapping | null = null;
   let globalRowCounter = 0;
+  let lastYieldTime = performance.now();
 
   // Process ALL sheets in the workbook (e.g. Sheet 1: 986 rows, Sheet 2: 1507 rows -> Total 2493 rows!)
   for (const sheetName of workbook.SheetNames) {
+    if (options?.signal?.aborted) {
+      throw new Error('Importação cancelada pelo operador.');
+    }
+
     const ws = workbook.Sheets[sheetName];
     if (!ws) continue;
 
@@ -735,6 +802,33 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     const startRow = Math.max(0, mapping.headerRowIndex + 1);
 
     for (let r = startRow; r < rawRows.length; r++) {
+      if (options?.signal?.aborted) {
+        throw new Error('Importação cancelada pelo operador.');
+      }
+
+      // Non-blocking yield to main UI thread every 250 rows or every 50ms:
+      // This prevents ANY browser freeze, ensures silky 60fps UI, and updates progress bar!
+      const now = performance.now();
+      if (r % 250 === 0 || now - lastYieldTime > 50) {
+        lastYieldTime = now;
+        const elapsedSec = (now - startTime) / 1000;
+        const speed = elapsedSec > 0 ? Math.round(globalRowCounter / elapsedSec) : 0;
+        const pct = Math.min(95, Math.max(15, Math.round((globalRowCounter / Math.max(1, totalEstimatedRows)) * 100)));
+
+        options?.onProgress?.({
+          stage: 'PROCESSANDO_LINHAS',
+          message: `Lendo e padronizando linha ${globalRowCounter.toLocaleString('pt-BR')} de ~${totalEstimatedRows.toLocaleString('pt-BR')} (${sheetName})...`,
+          current: globalRowCounter,
+          total: totalEstimatedRows,
+          percentage: pct,
+          sheetName,
+          speedRowsPerSec: speed,
+        });
+
+        // Yield execution to allow React/browser to render and paint
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+
       const row = rawRows[r];
       if (!Array.isArray(row) || row.length === 0) continue;
 
@@ -864,6 +958,16 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     throw new Error('Nenhum pedido operacional foi identificado na planilha.');
   }
 
+  const durationMs = Math.round(performance.now() - startTime);
+
+  options?.onProgress?.({
+    stage: 'FINALIZANDO',
+    message: `Leitura concluída em ${(durationMs / 1000).toFixed(1)}s! ${rowsList.length.toLocaleString('pt-BR')} pedidos prontos para conferência.`,
+    current: rowsList.length,
+    total: rowsList.length,
+    percentage: 100,
+  });
+
   return rowsList;
 }
 
@@ -988,7 +1092,12 @@ async function parsePdfReport(file: File): Promise<ParsedRow[]> {
   return parsedOrders;
 }
 
-export function analyzeImport(parsedRows: ParsedRow[], currentOrders: Order[], fileName: string): ImportAnalysis {
+export function analyzeImport(
+  parsedRows: ParsedRow[], 
+  currentOrders: Order[], 
+  fileName: string,
+  durationMs?: number
+): ImportAnalysis {
   const currentByCode = new Map<string, Order>();
   currentOrders.forEach(o => currentByCode.set(o.codigo.toLowerCase().trim(), o));
 
@@ -1124,6 +1233,11 @@ export function analyzeImport(parsedRows: ParsedRow[], currentOrders: Order[], f
     statusBreakdown[s] = (statusBreakdown[s] || 0) + 1;
   });
 
+  const isComplete = errorCount < parsedRows.length && (newCount > 0 || updateCount > 0 || unchangedCount > 0);
+  const incompleteReason = !isComplete 
+    ? 'Todos os registros continham erros de formatação ou não seguiam o padrão SOL-2026' 
+    : (errorCount > 0 ? `Leitura parcial: ${errorCount} registro(s) com pendências ou fora do padrão` : undefined);
+
   return {
     fileName,
     totalFound: parsedRows.length,
@@ -1135,6 +1249,9 @@ export function analyzeImport(parsedRows: ParsedRow[], currentOrders: Order[], f
     detectedConfidence: parsedRows[0]?.detectedConfidence,
     statusBreakdown,
     items: diffItems,
+    tempoProcessamentoMs: durationMs,
+    isComplete,
+    incompleteReason,
   };
 }
 
