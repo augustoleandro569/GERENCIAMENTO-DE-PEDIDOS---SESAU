@@ -73,10 +73,11 @@ export const CANONICAL_UNITS: HospitalUnit[] = [
 const CANONICAL_MAP = new Map<string, HospitalUnit>();
 CANONICAL_UNITS.forEach(u => {
   CANONICAL_MAP.set(u.sigla.toUpperCase(), u);
+  CANONICAL_MAP.set(u.nome.toUpperCase(), u);
 });
 
-// Resilient normalizer that maps dirty strings from legacy exports/spreadsheets
-export function cleanUnitName(raw: string): string {
+// Maps dirty strings and variants to the canonical sigla
+export function cleanUnitSigla(raw: string): string {
   if (!raw) return 'HGE';
   const trimmed = raw.trim();
   const upper = trimmed.toUpperCase();
@@ -91,8 +92,15 @@ export function cleanUnitName(raw: string): string {
   }
 
   // If already exactly a canonical sigla, return directly
-  if (CANONICAL_MAP.has(upper)) {
-    return upper;
+  const directMatch = CANONICAL_UNITS.find(u => u.sigla.toUpperCase() === upper);
+  if (directMatch) {
+    return directMatch.sigla;
+  }
+
+  // If matches canonical full name, return its sigla
+  const nameMatch = CANONICAL_UNITS.find(u => u.nome.toUpperCase() === upper);
+  if (nameMatch) {
+    return nameMatch.sigla;
   }
 
   // Normalized version without accents and special characters
@@ -291,16 +299,72 @@ export function cleanUnitName(raw: string): string {
     }
   }
 
-  // If no match found, keep trimmed acronym or fallback to HGE
-  return trimmed.slice(0, 15).toUpperCase();
+  return trimmed;
+}
+
+/**
+ * Normalizes any unit input string into its COMPLETE FULL OFFICIAL NAME.
+ * Never truncates to 15 characters, never returns just the sigla.
+ * E.g.:
+ *  "HGE" -> "Hospital Geral do Estado Dr. Osvaldo Brandão Vilela"
+ *  "UPA DR. CL" -> "UPA Dr. Cláudio Costa - Chã da Jaqueira"
+ *  "HMA" -> "Hospital Metropolitano de Alagoas"
+ */
+export function getUnitFullName(raw: string): string {
+  if (!raw) return 'Hospital Geral do Estado Dr. Osvaldo Brandão Vilela';
+  const trimmed = raw.trim();
+  if (!trimmed) return 'Hospital Geral do Estado Dr. Osvaldo Brandão Vilela';
+
+  const MEASURE_UNITS = new Set([
+    'UND', 'UN', 'UNID', 'CX', 'CXS', 'CAIXA', 'CAIXAS', 'FR', 'FRASCO', 'FRASCOS',
+    'AMP', 'AMPOLA', 'AMPOLAS', 'PCT', 'PACOTE', 'PACOTES', 'COMP', 'COMPRIMIDO',
+    'BLISTER', 'KG', 'G', 'MG', 'L', 'ML', 'ROLO', 'PAR', 'TUBO'
+  ]);
+  if (MEASURE_UNITS.has(trimmed.toUpperCase())) {
+    return 'Hospital Geral do Estado Dr. Osvaldo Brandão Vilela';
+  }
+
+  const upper = trimmed.toUpperCase();
+
+  // If already exactly a canonical full name
+  const exactMatch = CANONICAL_UNITS.find(u => u.nome.toUpperCase() === upper);
+  if (exactMatch) {
+    return exactMatch.nome;
+  }
+
+  // Resolve to canonical unit
+  const sigla = cleanUnitSigla(trimmed);
+  const canonical = CANONICAL_MAP.get(sigla);
+  if (canonical && canonical.nome) {
+    return canonical.nome;
+  }
+
+  // Fallback check against canonical units
+  for (const cu of CANONICAL_UNITS) {
+    if (upper.includes(cu.sigla) || upper.includes(cu.nome.toUpperCase())) {
+      return cu.nome;
+    }
+  }
+
+  // If not recognized in SESAU canonical registry, keep full untruncated name
+  return trimmed;
+}
+
+// Default export cleans unit name to full official name
+export function cleanUnitName(raw: string): string {
+  return getUnitFullName(raw);
 }
 
 export function getCanonicalUnit(siglaOrDirty: string): HospitalUnit {
-  const cleanSigla = cleanUnitName(siglaOrDirty);
-  return CANONICAL_MAP.get(cleanSigla) || {
+  const cleanSigla = cleanUnitSigla(siglaOrDirty);
+  const found = CANONICAL_MAP.get(cleanSigla);
+  if (found) return found;
+
+  const fullName = getUnitFullName(siglaOrDirty);
+  return {
     id: `u-${cleanSigla.toLowerCase()}`,
     sigla: cleanSigla,
-    nome: cleanSigla,
+    nome: fullName,
     municipio: 'Alagoas',
     tipo: 'Hospital',
     ativa: true,

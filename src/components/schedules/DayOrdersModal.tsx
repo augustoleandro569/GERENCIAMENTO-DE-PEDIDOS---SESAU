@@ -148,20 +148,25 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
     const solicitacoes: Order[] = [];
 
     orders.forEach(o => {
-      // Pedidos desvinculados sem cronograma não pertencem ao dia
-      if (o.cronograma_vinculo === 'NENHUM' || !o.cronograma_id) {
+      // Pedidos desvinculados sem cronograma e sem datas agendadas não pertencem ao dia
+      if (o.cronograma_vinculo === 'NENHUM' && !o.cronograma_id && !o.data_prevista_entrega) {
         return;
       }
 
       // Aplica multi-filtros externos
-      if (effectiveUnits.length > 0 && !effectiveUnits.includes(o.unidade)) {
-        return;
+      if (effectiveUnits.length > 0) {
+        const uLow = (o.unidade || '').toLowerCase();
+        const matchesUnit = effectiveUnits.some(eu => {
+          const euLow = eu.toLowerCase();
+          return uLow === euLow || uLow.includes(euLow) || euLow.includes(uLow);
+        });
+        if (!matchesUnit) return;
       }
       if (effectiveOrderTypes.length > 0 && !effectiveOrderTypes.includes(o.tipo)) {
         return;
       }
 
-      const sch = schedulesMap.get(o.cronograma_id);
+      const sch = o.cronograma_id ? schedulesMap.get(o.cronograma_id) : undefined;
 
       // 1. Entrega: explicit delivery or schedule delivery
       const dEntrega = o.data_prevista_entrega || sch?.data_entrega;
@@ -182,16 +187,17 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       }
 
       // 4. Aprovação: se vinculado ou com data de aprovação
-      if (o.cronograma_id || o.data_aprovacao) {
+      if (o.cronograma_id || o.data_aprovacao || o.cronograma_vinculo === 'MANUAL') {
         const dAprov = o.data_aprovacao || sch?.data_limite_aprovacao;
         if (matchesDay(dAprov)) {
           aprovacoes.push(o);
         }
       }
 
-      // 5. Solicitação: apenas se vinculado a cronograma ativo
-      if (o.cronograma_id && sch?.data_limite_solicitacao) {
-        if (matchesDay(sch.data_limite_solicitacao)) {
+      // 5. Solicitação: se vinculado a cronograma ativo ou com data de solicitação
+      if ((o.cronograma_id || o.cronograma_vinculo === 'MANUAL') && (o.data_solicitacao || sch?.data_limite_solicitacao)) {
+        const dSolic = o.data_solicitacao || sch?.data_limite_solicitacao;
+        if (matchesDay(dSolic)) {
           solicitacoes.push(o);
         }
       }

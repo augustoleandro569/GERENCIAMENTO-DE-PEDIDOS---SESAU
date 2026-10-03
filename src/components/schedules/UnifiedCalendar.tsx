@@ -106,6 +106,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
   );
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [isDayOrdersModalOpen, setIsDayOrdersModalOpen] = useState(false);
+  const [returnToDayOrdersModal, setReturnToDayOrdersModal] = useState(false);
   const [isUnlinkConfirmOpen, setIsUnlinkConfirmOpen] = useState(false);
   const [isUnlinking, setIsUnlinking] = useState(false);
   const [unlinkOptions, setUnlinkOptions] = useState({
@@ -169,13 +170,14 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
 
   const filteredOrders = useMemo(() => {
     return orders.filter(o => {
-      // Pedidos desvinculados sem cronograma nunca pertencem ao calendário
-      if (o.cronograma_vinculo === 'NENHUM' || !o.cronograma_id) {
+      // Pedidos desvinculados sem qualquer cronograma ou data ativa nunca pertencem ao calendário
+      if (o.cronograma_vinculo === 'NENHUM' && !o.cronograma_id && !o.data_prevista_entrega && !o.data_inicio_separacao && !o.data_expedicao) {
         return false;
       }
       // Deve possuir vínculo operacional ativo (cronograma ou data de entrega/etapa agendada)
       const hasCalendarPresence = Boolean(
         o.cronograma_id || 
+        o.cronograma_vinculo === 'MANUAL' ||
         o.data_prevista_entrega || 
         o.data_inicio_separacao || 
         o.data_expedicao
@@ -183,7 +185,14 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       if (!hasCalendarPresence) return false;
 
       // Multi-seleção de Unidades
-      if (selectedUnits.length > 0 && !selectedUnits.includes(o.unidade)) return false;
+      if (selectedUnits.length > 0) {
+        const uLow = (o.unidade || '').toLowerCase();
+        const matchesUnit = selectedUnits.some(su => {
+          const suLow = su.toLowerCase();
+          return uLow === suLow || uLow.includes(suLow) || suLow.includes(uLow);
+        });
+        if (!matchesUnit) return false;
+      }
 
       // Multi-seleção de Tipos
       if (selectedOrderTypes.length > 0 && !selectedOrderTypes.includes(o.tipo)) return false;
@@ -235,7 +244,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
     // Map Orders to their respective dates (explicit or schedule-linked)
     filteredOrders.forEach(ord => {
       // Ignora pedidos sem vínculo ativo
-      if (ord.cronograma_vinculo === 'NENHUM' || !ord.cronograma_id) {
+      if (ord.cronograma_vinculo === 'NENHUM' && !ord.cronograma_id && !ord.data_prevista_entrega) {
         return;
       }
 
@@ -920,9 +929,15 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       {/* Link Order Modal */}
       <LinkOrderModal
         isOpen={isLinkModalOpen}
-        onClose={() => setIsLinkModalOpen(false)}
-        targetDate={`2026-${monthStr}-${String(selectedDay || 1).padStart(2, '0')}`}
-        dayNumber={selectedDay || 1}
+        onClose={() => {
+          setIsLinkModalOpen(false);
+          if (returnToDayOrdersModal) {
+            setIsDayOrdersModalOpen(true);
+            setReturnToDayOrdersModal(false);
+          }
+        }}
+        targetDate={`2026-${monthStr}-${String(selectedDay || todayRef.day).padStart(2, '0')}`}
+        dayNumber={selectedDay || todayRef.day}
         monthNumber={currentMonth}
         availableSchedules={filteredSchedules}
       />
@@ -935,7 +950,10 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
         monthNumber={currentMonth}
         onNavigateDay={(newDay) => setSelectedDay(newDay)}
         onSelectOrder={onSelectOrder}
-        onOpenLinkModal={() => setIsLinkModalOpen(true)}
+        onOpenLinkModal={() => {
+          setReturnToDayOrdersModal(true);
+          setIsLinkModalOpen(true);
+        }}
         onOpenNewSchedule={onOpenNewSchedule}
         externalFilterUnits={selectedUnits}
         externalFilterOrderTypes={selectedOrderTypes}

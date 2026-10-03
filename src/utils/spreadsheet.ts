@@ -239,76 +239,35 @@ function isJunkOrSubtotalRow(firstFewValues: string[]): boolean {
  * 3. Multi-line orders (aggregation of multiple items belonging to the same solicitation code).
  * 4. Automatic unit normalization mapping legacy truncated names to official SESAU units.
  */
-export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
-  const fileName = file.name.toLowerCase();
+interface SheetColumnMapping {
+  headerRowIndex: number;
+  detectedHeaders: string[];
+  colIndexCodigo: number;
+  codeScore: number;
+  colIndexUnidade: number;
+  unitScore: number;
+  colIndexQtdItens: number;
+  qtdScore: number;
+  colIndexTipo: number;
+  colIndexSolicitante: number;
+  colIndexCpf: number;
+  colIndexPrograma: number;
+  colIndexStatus: number;
+  statusScore: number;
+  colIndexDataSolicitacao: number;
+  colIndexDataAprovacao: number;
+  colIndexDataSeparacao: number;
+  colIndexDataExpedicao: number;
+  colIndexDataEntrega: number;
+  colIndexValidador: number;
+  colIndexSeparador: number;
+  colIndexEntregador: number;
+  colIndexHistorico: number;
+}
 
-  if (fileName.endsWith('.pdf')) {
-    return parsePdfReport(file);
-  }
+function detectSheetColumns(rawRows: unknown[][], fallbackMapping?: SheetColumnMapping): SheetColumnMapping | null {
+  if (!rawRows || rawRows.length === 0) return null;
 
-  const arrayBuffer = await file.arrayBuffer();
-  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-  
-  // Ensure full sheet range is decoded for all sheets, even if export metadata !ref was truncated
-  for (const name of workbook.SheetNames) {
-    const ws = workbook.Sheets[name];
-    if (ws) {
-      let maxR = 0;
-      let maxC = 0;
-      for (const cellKey in ws) {
-        if (cellKey[0] === '!') continue;
-        try {
-          const cellCoord = XLSX.utils.decode_cell(cellKey);
-          if (cellCoord.r > maxR) maxR = cellCoord.r;
-          if (cellCoord.c > maxC) maxC = cellCoord.c;
-        } catch {
-          // ignore
-        }
-      }
-      if (maxR > 0) {
-        const curRef = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
-        if (!curRef || curRef.e.r < maxR) {
-          ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: Math.max(maxC, curRef?.e.c || 0) } });
-        }
-      }
-    }
-  }
-
-  // Find the sheet that has the actual order data
-  let targetSheet = workbook.Sheets[workbook.SheetNames[0]];
-  let maxScore = -1;
-
-  for (const name of workbook.SheetNames) {
-    const ws = workbook.Sheets[name];
-    const data: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
-    if (!data || data.length === 0) continue;
-
-    // Score sheet based on order headers
-    let sheetScore = 0;
-    for (let r = 0; r < Math.min(data.length, 15); r++) {
-      const row = data[r];
-      if (Array.isArray(row)) {
-        const norm = row.map(c => normalizeKey(String(c || '')));
-        if (norm.some(k => k.includes('solicitacao') || k.includes('pedido'))) sheetScore += 50;
-        if (norm.some(k => k.includes('unidade') || k.includes('hospital'))) sheetScore += 30;
-        if (norm.some(k => k.includes('quantidade') || k.includes('qtd'))) sheetScore += 20;
-      }
-    }
-    sheetScore += data.length; // tie-breaker: number of rows
-    if (sheetScore > maxScore) {
-      maxScore = sheetScore;
-      targetSheet = ws;
-    }
-  }
-
-  // Convert to 2D array of rows with default empty strings to preserve column indices
-  const rawRows: unknown[][] = XLSX.utils.sheet_to_json(targetSheet, { header: 1, raw: false, defval: '' });
-
-  if (!rawRows || rawRows.length === 0) {
-    throw new Error('A planilha está vazia.');
-  }
-
-  // Detect header row with high precision scoring
   let headerRowIndex = -1;
   let detectedHeaders: string[] = [];
   let bestHeaderScore = -1;
@@ -321,7 +280,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
 
       // Order code presence
       if (rowNormalized.some(c => 
-        (c.includes('solicitacao') || c.includes('pedido') || c === 'codigo' || c === 'cod') &&
+        (c.includes('solicitacao') || c.includes('pedido') || c.includes('requisicao') || c === 'codigo' || c === 'cod' || c === 'doc' || c === 'documento') &&
         !c.includes('item') && !c.includes('produto') && !c.includes('material') && !c.includes('tci')
       )) {
         score += 50;
@@ -329,7 +288,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
 
       // Unit/hospital presence
       if (rowNormalized.some(c => 
-        c.includes('unidade') || c.includes('hospital') || c.includes('destino') || c.includes('programa')
+        c.includes('unidade') || c.includes('hospital') || c.includes('destino') || c.includes('programa') || c.includes('estabelecimento') || c.includes('setor')
       )) {
         score += 30;
       }
@@ -340,11 +299,11 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
       }
 
       // Date or status presence
-      if (rowNormalized.some(c => c.includes('data') || c.includes('status') || c.includes('situacao'))) {
+      if (rowNormalized.some(c => c.includes('data') || c.includes('status') || c.includes('situacao') || c.includes('fase'))) {
         score += 15;
       }
 
-      if (score > bestHeaderScore && score >= 45) {
+      if (score > bestHeaderScore && score >= 40) {
         bestHeaderScore = score;
         headerRowIndex = i;
         detectedHeaders = row.map(cell => String(cell || '').trim());
@@ -354,6 +313,14 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
 
   // Fallback to first non-empty row if scoring didn't trigger
   if (headerRowIndex === -1) {
+    if (fallbackMapping && rawRows[0] && Array.isArray(rawRows[0]) && rawRows[0].length >= 3) {
+      // Continuation sheet with same structure without repeated headers
+      return {
+        ...fallbackMapping,
+        headerRowIndex: -1, // Data starts immediately at row 0
+      };
+    }
+
     for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
       const row = rawRows[i];
       if (Array.isArray(row) && row.filter(Boolean).length >= 4) {
@@ -400,24 +367,24 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     if (!k) return;
 
     // 1. ORDER CODE: strictly order/solicitation identifiers!
-    // NEVER match product/material/item identifiers like "Código Material", "Código TCI", "Item", "Cód. Produto"
     const isMaterialOrProduct = k.includes('material') || k.includes('produto') || k.includes('medicamento') || 
                                 k.includes('insumo') || k.includes('tci') || k.includes('catmat') || 
                                 k.includes('barras') || k.includes('ean') || k.includes('lote') || k.includes('subitem');
 
     if (!isMaterialOrProduct) {
       if (k === 'numsolicitacao' || k === 'numerosolicitacao' || k === 'numpedido' || k === 'numeropedido' ||
-          k === 'codigosolicitacao' || k === 'codigopedido' || k === 'solicitacao' || k === 'pedido') {
+          k === 'codigosolicitacao' || k === 'codigopedido' || k === 'solicitacao' || k === 'pedido' ||
+          k === 'numrequisicao' || k === 'requisicao' || k === 'nsol' || k === 'nsolicitacao' || k === 'npedido') {
         if (100 > codeScore) {
           colIndexCodigo = idx;
           codeScore = 100;
         }
-      } else if ((k.includes('solicitacao') || k.includes('pedido')) && !k.includes('item')) {
+      } else if ((k.includes('solicitacao') || k.includes('pedido') || k.includes('requisicao') || k === 'ordemfornecimento' || k === 'of') && !k.includes('item')) {
         if (80 > codeScore) {
           colIndexCodigo = idx;
           codeScore = 80;
         }
-      } else if ((k === 'codigo' || k === 'cod') && !k.includes('item') && !k.includes('unidade') && !k.includes('cidade')) {
+      } else if ((k === 'codigo' || k === 'cod' || k === 'doc' || k === 'documento') && !k.includes('item') && !k.includes('unidade') && !k.includes('cidade')) {
         if (50 > codeScore) {
           colIndexCodigo = idx;
           codeScore = 50;
@@ -425,8 +392,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
       }
     }
 
-    // 2. HOSPITAL UNIT: strictly hospital/destination health unit!
-    // NEVER match unit of measure like "Unidade Medida", "UND", "Unid. Medida", "Embalagem"
+    // 2. HOSPITAL UNIT: strictly destination health unit!
     const isUnitOfMeasure = k.includes('medida') || k.includes('embalagem') || k.includes('fracao') || 
                             k.includes('dispensacao') || k === 'und' || k === 'unid' || k === 'um';
 
@@ -438,12 +404,12 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
           colIndexUnidade = idx;
           unitScore = 100;
         }
-      } else if (k.includes('hospital') || k.includes('destino') || k.includes('requisita')) {
+      } else if (k.includes('hospital') || k.includes('destino') || k.includes('requisita') || k.includes('estabelecimento')) {
         if (80 > unitScore) {
           colIndexUnidade = idx;
           unitScore = 80;
         }
-      } else if (k.includes('unidade') || k.includes('sigla')) {
+      } else if (k.includes('unidade') || k.includes('sigla') || k.includes('setor') || k.includes('entidade')) {
         if (50 > unitScore) {
           colIndexUnidade = idx;
           unitScore = 50;
@@ -451,9 +417,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
       }
     }
 
-    // 3. QUANTITY OF ITEMS: strictly item count / ordered quantity!
-    // NEVER match row index / sequence columns like "Item", "Seq", "Nº", "Ordem", "Linha"
-    // NEVER match prices/values like "Valor Total", "Preço", "Custo"
+    // 3. QUANTITY OF ITEMS
     const isPriceOrValue = k.includes('preco') || k.includes('valor') || k.includes('custo') || k.includes('totalrs');
     const isSequenceIndex = k === 'item' || k === 'seq' || k === 'sequencia' || k === 'ordem' || k === 'linha' || k === 'posicao';
 
@@ -503,7 +467,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     else if (k.includes('programa')) {
       if (colIndexPrograma === -1) colIndexPrograma = idx;
     }
-    // 8. ORDER STATUS (Prioritize overall order lifecycle over delivery/checkpoint status!)
+    // 8. ORDER STATUS
     const isDeliveryStatus = k.includes('entrega') || k.includes('transporte') || k.includes('despacho') || k.includes('envio');
     const isItemStatus = k.includes('item') || k.includes('material') || k.includes('produto') || k.includes('tci') || k.includes('lote');
     const isPaymentStatus = k.includes('pagamento') || k.includes('financeiro') || k.includes('nota') || k.includes('faturamento') || k.includes('fiscal');
@@ -528,7 +492,6 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
           statusScore = 70;
         }
       } else if (isDeliveryStatus && (k.includes('status') || k.includes('situacao') || k.includes('fase') || k.includes('etapa'))) {
-        // Delivery status column (e.g. "Status da Entrega") - only fallback with score 30
         if (30 > statusScore) {
           colIndexStatus = idx;
           statusScore = 30;
@@ -575,10 +538,9 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
   });
 
   // Data Inspection & Disambiguation:
-  // Check the first 15 data rows to verify column assignments
   const sampleDataRows = rawRows.slice(headerRowIndex + 1, headerRowIndex + 16);
 
-  // If detected unit column actually contains units of measure (UND, UN, CX, FR), find another candidate!
+  // If detected unit column actually contains units of measure, discard and find true unit column
   if (colIndexUnidade !== -1) {
     let unitOfMeasureMatches = 0;
     for (const r of sampleDataRows) {
@@ -591,7 +553,6 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     }
 
     if (unitOfMeasureMatches >= 2) {
-      // colIndexUnidade was falsely pointing to unit of measure! Discard it and find a true hospital unit column
       colIndexUnidade = -1;
       for (let c = 0; c < detectedHeaders.length; c++) {
         const k = normalizeKey(detectedHeaders[c]);
@@ -600,11 +561,10 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
         let hospitalMatches = 0;
         for (const r of sampleDataRows) {
           if (Array.isArray(r)) {
-            const val = String(r[c] || '').trim();
-            const norm = val.toUpperCase();
-            if (norm.includes('HOSP') || norm.includes('UPA') || norm.includes('HGE') || 
-                norm.includes('HMA') || norm.includes('HEMOAL') || norm.includes('SAMU') ||
-                norm.includes('LACEN') || norm.includes('MATERNIDADE') || norm.includes('CLINICA')) {
+            const val = String(r[c] || '').trim().toUpperCase();
+            if (val.includes('HOSP') || val.includes('UPA') || val.includes('HGE') || 
+                val.includes('HMA') || val.includes('HEMOAL') || val.includes('SAMU') ||
+                val.includes('LACEN') || val.includes('MATERNIDADE') || val.includes('CLINICA')) {
               hospitalMatches++;
             }
           }
@@ -617,14 +577,14 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     }
   }
 
-  // If order code was not found or was pointing to product code (e.g. TCI), search for real order code
+  // If order code was not found or pointing to product code, search for order code in sample rows
   if (colIndexCodigo === -1 || codeScore < 80) {
     for (let c = 0; c < detectedHeaders.length; c++) {
       let solCount = 0;
       for (const r of sampleDataRows) {
         if (Array.isArray(r)) {
           const val = String(r[c] || '').trim().toUpperCase();
-          if (val.startsWith('SOL-') || /^\d{5,8}$/.test(val)) {
+          if (val.startsWith('SOL') || val.startsWith('PED') || val.startsWith('REQ') || /^\d{3,10}$/.test(val)) {
             solCount++;
           }
         }
@@ -636,7 +596,7 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     }
   }
 
-  // If quantity column was pointing to sequence column (1, 2, 3, 4, 5...), find true quantity column
+  // If quantity column was pointing to sequence column, find true quantity column
   if (colIndexQtdItens !== -1 && qtdScore < 80) {
     let isPureSequence = true;
     let seqVal = 1;
@@ -652,7 +612,6 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     }
 
     if (isPureSequence && sampleDataRows.length >= 3) {
-      // It was just row numbers 1, 2, 3! Search for an actual quantity column
       for (let c = 0; c < detectedHeaders.length; c++) {
         if (c === colIndexQtdItens) continue;
         const k = normalizeKey(detectedHeaders[c]);
@@ -664,187 +623,241 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
     }
   }
 
-  // 4. STATUS DISAMBIGUATION:
-  // If the detected status column has 100% "Entregue" or was a delivery checkpoint column (score < 80),
-  // check whether another column in the spreadsheet contains true order lifecycle statuses!
-  if (colIndexStatus !== -1 && sampleDataRows.length >= 2) {
-    let allEntregueCount = 0;
-    for (const r of sampleDataRows) {
-      if (Array.isArray(r)) {
-        const val = normalizeOrderStatus(String(r[colIndexStatus] || ''));
-        if (val === 'Entregue') {
-          allEntregueCount++;
-        }
+  return {
+    headerRowIndex,
+    detectedHeaders,
+    colIndexCodigo,
+    codeScore,
+    colIndexUnidade,
+    unitScore,
+    colIndexQtdItens,
+    qtdScore,
+    colIndexTipo,
+    colIndexSolicitante,
+    colIndexCpf,
+    colIndexPrograma,
+    colIndexStatus,
+    statusScore,
+    colIndexDataSolicitacao,
+    colIndexDataAprovacao,
+    colIndexDataSeparacao,
+    colIndexDataExpedicao,
+    colIndexDataEntrega,
+    colIndexValidador,
+    colIndexSeparador,
+    colIndexEntregador,
+    colIndexHistorico,
+  };
+}
+
+/**
+ * Universal Parser for Spreadsheets (.xlsx, .xls, .csv) and PDF reports (.pdf).
+ * Solves:
+ * 1. Multi-sheet reading: reads ALL sheets in the workbook (e.g. Sheet 1: 986, Sheet 2: 1507 = 2493 rows).
+ * 2. Full unit name resolution: brings the complete official name ("Hospital Geral do Estado Dr. Osvaldo Brandão Vilela", "UPA Dr. Cláudio Costa - Chã da Jaqueira") instead of truncated siglas!
+ * 3. Multi-line orders: preserves every single row from multi-item orders.
+ * 4. Brazilian CSV encoding & delimiter support (; and ,).
+ * 5. Complete status fidelity: RASCUNHO, AGUARDANDO VALIDAÇÃO, APROVADO, AGUARDANDO SEPARAÇÃO, EM SEPARAÇÃO, AGUARDANDO CONFERENCIA, EM CONFERENCIA, EXPEDIDA, EM TRANSPORTE, ENTREGUE, ENTREGUE PARCIALMENTE, CANCELADO.
+ */
+export async function parseSpreadsheetFile(file: File): Promise<ParsedRow[]> {
+  const fileName = file.name.toLowerCase();
+
+  if (fileName.endsWith('.pdf')) {
+    return parsePdfReport(file);
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  let workbook: XLSX.WorkBook;
+
+  if (fileName.endsWith('.csv') || fileName.endsWith('.txt')) {
+    const uint8 = new Uint8Array(arrayBuffer);
+    let text = new TextDecoder('utf-8', { fatal: false }).decode(uint8);
+    if (text.includes('\uFFFD')) {
+      try {
+        text = new TextDecoder('windows-1252').decode(uint8);
+      } catch {
+        // keep utf-8 text
       }
     }
+    workbook = XLSX.read(text, { type: 'string', cellDates: true, raw: false });
+  } else {
+    workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true, raw: false });
+  }
 
-    // If every row in the sample is "Entregue" and statusScore is not top priority (score < 90),
-    // search if there is another column with diverse order statuses
-    if (allEntregueCount === sampleDataRows.length && statusScore < 90) {
-      for (let c = 0; c < detectedHeaders.length; c++) {
-        if (c === colIndexStatus) continue;
-        const k = normalizeKey(detectedHeaders[c]);
-        if (k.includes('entrega') || k.includes('data') || k.includes('dt') || k.includes('medida')) continue;
-
-        let hasDiverseStatuses = false;
-        for (const r of sampleDataRows) {
-          if (Array.isArray(r)) {
-            const val = normalizeOrderStatus(String(r[c] || ''));
-            if (val !== 'Entregue' && val !== 'Aguardando Aprovação') {
-              hasDiverseStatuses = true;
-              break;
-            }
-          }
+  // Ensure full sheet range is decoded for all sheets, even if export metadata !ref was truncated
+  for (const name of workbook.SheetNames) {
+    const ws = workbook.Sheets[name];
+    if (ws) {
+      let maxR = 0;
+      let maxC = 0;
+      for (const cellKey in ws) {
+        if (cellKey[0] === '!') continue;
+        try {
+          const cellCoord = XLSX.utils.decode_cell(cellKey);
+          if (cellCoord.r > maxR) maxR = cellCoord.r;
+          if (cellCoord.c > maxC) maxC = cellCoord.c;
+        } catch {
+          // ignore
         }
-        if (hasDiverseStatuses) {
-          colIndexStatus = c;
-          statusScore = 85;
-          break;
+      }
+      if (maxR > 0) {
+        const curRef = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
+        if (!curRef || curRef.e.r < maxR) {
+          ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: Math.max(maxC, curRef?.e.c || 0) } });
         }
       }
     }
   }
 
-  // Process rows
-  const ordersMap = new Map<string, ParsedRow>();
   const codeOccurrences = new Map<string, number>();
   const rowsList: ParsedRow[] = [];
-  let lastActiveOrderCode = '';
-  let lastActiveUnit = '';
+  let primaryMapping: SheetColumnMapping | null = null;
+  let globalRowCounter = 0;
 
-  for (let r = headerRowIndex + 1; r < rawRows.length; r++) {
-    const row = rawRows[r];
-    if (!Array.isArray(row) || row.length === 0) continue;
+  // Process ALL sheets in the workbook (e.g. Sheet 1: 986 rows, Sheet 2: 1507 rows -> Total 2493 rows!)
+  for (const sheetName of workbook.SheetNames) {
+    const ws = workbook.Sheets[sheetName];
+    if (!ws) continue;
 
-    // Check if row is empty or a subtotal / page footer / header repeat
-    const strValues = row.map(cell => String(cell || '').trim());
-    if (strValues.every(v => !v)) continue;
+    const rawRows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    if (!rawRows || rawRows.length === 0) continue;
 
-    if (isJunkOrSubtotalRow(strValues)) {
-      continue;
+    const mapping = detectSheetColumns(rawRows, primaryMapping || undefined);
+    if (!mapping) continue;
+
+    if (!primaryMapping) {
+      primaryMapping = mapping;
     }
 
-    // Only skip if the row is literally a repeat of the column headers
-    if (colIndexCodigo !== -1 && detectedHeaders[colIndexCodigo]) {
-      const codeValNorm = normalizeKey(strValues[colIndexCodigo]);
-      const headerNorm = normalizeKey(detectedHeaders[colIndexCodigo]);
-      if (codeValNorm && codeValNorm === headerNorm) {
+    let lastActiveOrderCode = '';
+    let lastActiveUnit = '';
+
+    const startRow = Math.max(0, mapping.headerRowIndex + 1);
+
+    for (let r = startRow; r < rawRows.length; r++) {
+      const row = rawRows[r];
+      if (!Array.isArray(row) || row.length === 0) continue;
+
+      const strValues = row.map(cell => String(cell || '').trim());
+      if (strValues.every(v => !v)) continue;
+
+      if (isJunkOrSubtotalRow(strValues)) {
         continue;
       }
-    }
 
-    // Extract values using detected column indices
-    let codigo = colIndexCodigo !== -1 ? strValues[colIndexCodigo] || '' : '';
-    let tipo = colIndexTipo !== -1 ? strValues[colIndexTipo] || 'Mensal' : 'Mensal';
-    let solicitante = colIndexSolicitante !== -1 ? strValues[colIndexSolicitante] || '' : '';
-    let cpf = colIndexCpf !== -1 ? strValues[colIndexCpf] || '' : '';
-    let programa = colIndexPrograma !== -1 ? strValues[colIndexPrograma] || 'Hospitalar' : 'Hospitalar';
-    let rawUnidade = colIndexUnidade !== -1 ? strValues[colIndexUnidade] || '' : '';
-    
-    // Status Normalization: Convert Portuguese ERP terminology to standard OrderStatus
-    let rawStatus = colIndexStatus !== -1 ? strValues[colIndexStatus] || 'Aguardando Validação' : 'Aguardando Validação';
-    let status = normalizeOrderStatus(rawStatus);
-
-    // Quantity parsing with Brazilian format support
-    let itens = 1;
-    if (colIndexQtdItens !== -1) {
-      itens = parseQuantitySafe(strValues[colIndexQtdItens]);
-    }
-
-    // Additional fields
-    const data_solicitacao = colIndexDataSolicitacao !== -1 ? strValues[colIndexDataSolicitacao] : undefined;
-    const data_aprovacao = colIndexDataAprovacao !== -1 ? strValues[colIndexDataAprovacao] : undefined;
-    const data_inicio_separacao = colIndexDataSeparacao !== -1 ? strValues[colIndexDataSeparacao] : undefined;
-    const data_expedicao = colIndexDataExpedicao !== -1 ? strValues[colIndexDataExpedicao] : undefined;
-    const data_prevista_entrega = colIndexDataEntrega !== -1 ? strValues[colIndexDataEntrega] : undefined;
-    const validador = colIndexValidador !== -1 ? strValues[colIndexValidador] : undefined;
-    const separador = colIndexSeparador !== -1 ? strValues[colIndexSeparador] : undefined;
-    const entregador = colIndexEntregador !== -1 ? strValues[colIndexEntregador] : undefined;
-    const historico = colIndexHistorico !== -1 ? strValues[colIndexHistorico] : undefined;
-
-    // Excel merged-cell inheritance:
-    // If codigo is empty but there was a previous order and this row contains medicine/item data:
-    if (!codigo && lastActiveOrderCode && strValues.some(v => v.length > 0)) {
-      codigo = lastActiveOrderCode;
-      if (!rawUnidade && lastActiveUnit) {
-        rawUnidade = lastActiveUnit;
+      // Skip repeated header row mid-sheet
+      if (mapping.colIndexCodigo !== -1 && mapping.detectedHeaders[mapping.colIndexCodigo]) {
+        const codeValNorm = normalizeKey(strValues[mapping.colIndexCodigo]);
+        const headerNorm = normalizeKey(mapping.detectedHeaders[mapping.colIndexCodigo]);
+        if (codeValNorm && codeValNorm === headerNorm) {
+          continue;
+        }
       }
-    }
 
-    // If order code is missing, verify if it can be found in first column
-    if (!codigo) {
-      const firstVal = strValues[0];
-      if (firstVal && (firstVal.toUpperCase().startsWith('SOL-') || /^\d{4,8}$/.test(firstVal))) {
-        codigo = firstVal;
+      globalRowCounter++;
+
+      let codigo = mapping.colIndexCodigo !== -1 ? strValues[mapping.colIndexCodigo] || '' : '';
+      const tipo = mapping.colIndexTipo !== -1 ? strValues[mapping.colIndexTipo] || 'Mensal' : 'Mensal';
+      const solicitante = mapping.colIndexSolicitante !== -1 ? strValues[mapping.colIndexSolicitante] || '' : '';
+      const cpf = mapping.colIndexCpf !== -1 ? strValues[mapping.colIndexCpf] || '' : '';
+      const programa = mapping.colIndexPrograma !== -1 ? strValues[mapping.colIndexPrograma] || 'Hospitalar' : 'Hospitalar';
+      let rawUnidade = mapping.colIndexUnidade !== -1 ? strValues[mapping.colIndexUnidade] || '' : '';
+      
+      const rawStatus = mapping.colIndexStatus !== -1 ? strValues[mapping.colIndexStatus] || 'Aguardando Validação' : 'Aguardando Validação';
+      const status = normalizeOrderStatus(rawStatus);
+
+      let itens = 1;
+      if (mapping.colIndexQtdItens !== -1) {
+        itens = parseQuantitySafe(strValues[mapping.colIndexQtdItens]);
       }
-    }
 
-    // Clean up code formatting: strictly standardize to SOL-2026-XXXXX
-    codigo = codigo.trim().toUpperCase();
-    if (!codigo.startsWith('SOL-2026-')) {
-      const digits = codigo.replace(/\D/g, '');
-      if (digits) {
-        codigo = `SOL-2026-${digits.padStart(5, '0')}`;
-      } else {
-        // Fallback to row index based code so NO order row is dropped
-        codigo = `SOL-2026-${String(r).padStart(5, '0')}`;
+      const data_solicitacao = mapping.colIndexDataSolicitacao !== -1 ? strValues[mapping.colIndexDataSolicitacao] : undefined;
+      const data_aprovacao = mapping.colIndexDataAprovacao !== -1 ? strValues[mapping.colIndexDataAprovacao] : undefined;
+      const data_inicio_separacao = mapping.colIndexDataSeparacao !== -1 ? strValues[mapping.colIndexDataSeparacao] : undefined;
+      const data_expedicao = mapping.colIndexDataExpedicao !== -1 ? strValues[mapping.colIndexDataExpedicao] : undefined;
+      const data_prevista_entrega = mapping.colIndexDataEntrega !== -1 ? strValues[mapping.colIndexDataEntrega] : undefined;
+      const validador = mapping.colIndexValidador !== -1 ? strValues[mapping.colIndexValidador] : undefined;
+      const separador = mapping.colIndexSeparador !== -1 ? strValues[mapping.colIndexSeparador] : undefined;
+      const entregador = mapping.colIndexEntregador !== -1 ? strValues[mapping.colIndexEntregador] : undefined;
+      const historico = mapping.colIndexHistorico !== -1 ? strValues[mapping.colIndexHistorico] : undefined;
+
+      // Merged cell inheritance
+      if (!codigo && lastActiveOrderCode && strValues.some(v => v.length > 0)) {
+        codigo = lastActiveOrderCode;
+        if (!rawUnidade && lastActiveUnit) {
+          rawUnidade = lastActiveUnit;
+        }
       }
+
+      if (!codigo) {
+        const firstVal = strValues[0];
+        if (firstVal && (firstVal.toUpperCase().startsWith('SOL') || /^\d{3,8}$/.test(firstVal))) {
+          codigo = firstVal;
+        }
+      }
+
+      // Standardize order code format
+      codigo = codigo.trim().toUpperCase();
+      if (!codigo.startsWith('SOL-2026-')) {
+        const digits = codigo.replace(/\D/g, '');
+        if (digits) {
+          codigo = `SOL-2026-${digits.padStart(5, '0')}`;
+        } else {
+          codigo = `SOL-2026-${String(globalRowCounter).padStart(5, '0')}`;
+        }
+      }
+
+      // Full official unit name resolution (never truncated, never just the sigla!)
+      const fullUnitName = cleanUnitName(rawUnidade);
+
+      if (codigo) lastActiveOrderCode = codigo;
+      if (fullUnitName) lastActiveUnit = fullUnitName;
+
+      if (itens <= 1) {
+        itens = computeRealisticItemCount({
+          codigo,
+          tipo,
+          unidade: fullUnitName,
+          programa,
+          quantidade_itens: itens
+        });
+      }
+
+      // Preserve EVERY single row as a distinct order line:
+      const occurrence = (codeOccurrences.get(codigo) || 0) + 1;
+      codeOccurrences.set(codigo, occurrence);
+
+      const finalCodigo = occurrence > 1 
+        ? `${codigo}-${String(occurrence).padStart(2, '0')}` 
+        : codigo;
+
+      const parsedRow: ParsedRow = {
+        codigo: finalCodigo,
+        tipo: tipo || 'Mensal',
+        solicitante: solicitante || 'Solicitante SESAU',
+        cpf: cpf || '—',
+        programa: programa || 'Hospitalar',
+        unidade: fullUnitName,
+        status: status || 'Aguardando Validação',
+        itens,
+        criada_em: data_solicitacao || new Date().toISOString(),
+        data_solicitacao,
+        data_aprovacao,
+        data_inicio_separacao,
+        data_expedicao,
+        data_prevista_entrega,
+        validador,
+        separador,
+        entregador,
+        historico,
+        detectedStatusHeader: mapping.colIndexStatus !== -1 ? mapping.detectedHeaders[mapping.colIndexStatus] : undefined,
+        detectedConfidence: mapping.statusScore >= 80 ? 'ALTA' : (mapping.statusScore >= 50 ? 'MÉDIA' : 'BAIXA'),
+        raw: Object.fromEntries(row.map((val, idx) => [mapping.detectedHeaders[idx] || `col_${idx}`, val])),
+        rowIndex: globalRowCounter,
+      };
+
+      rowsList.push(parsedRow);
     }
-
-    // Normalization of unit name (cleans "UPA DR. CL", "HCB - HOSP", "HEMOAL - T", etc.)
-    const cleanUnit = cleanUnitName(rawUnidade);
-
-    // Keep track of active order and unit for merged cells
-    if (codigo) lastActiveOrderCode = codigo;
-    if (cleanUnit) lastActiveUnit = cleanUnit;
-
-    if (itens <= 1) {
-      itens = computeRealisticItemCount({
-        codigo,
-        tipo,
-        unidade: cleanUnit,
-        programa,
-        quantidade_itens: itens
-      });
-    }
-
-    // Preserve EVERY row as a distinct order line:
-    // If the solicitation code appears multiple times in the file (multi-item orders),
-    // assign unique sequence suffix (-01, -02, etc.) so that all 2493 rows are imported!
-    const occurrence = (codeOccurrences.get(codigo) || 0) + 1;
-    codeOccurrences.set(codigo, occurrence);
-
-    const finalCodigo = occurrence > 1 
-      ? `${codigo}-${String(occurrence).padStart(2, '0')}` 
-      : codigo;
-
-    const parsedRow: ParsedRow = {
-      codigo: finalCodigo,
-      tipo: tipo || 'Mensal',
-      solicitante: solicitante || 'Solicitante SESAU',
-      cpf: cpf || '—',
-      programa: programa || 'Hospitalar',
-      unidade: cleanUnit,
-      status: status || 'Aguardando Validação',
-      itens,
-      criada_em: data_solicitacao || new Date().toISOString(),
-      data_solicitacao,
-      data_aprovacao,
-      data_inicio_separacao,
-      data_expedicao,
-      data_prevista_entrega,
-      validador,
-      separador,
-      entregador,
-      historico,
-      detectedStatusHeader: colIndexStatus !== -1 ? detectedHeaders[colIndexStatus] : undefined,
-      detectedConfidence: statusScore >= 80 ? 'ALTA' : (statusScore >= 50 ? 'MÉDIA' : 'BAIXA'),
-      raw: Object.fromEntries(row.map((val, idx) => [detectedHeaders[idx] || `col_${idx}`, val])),
-      rowIndex: r + 1,
-    };
-
-    ordersMap.set(finalCodigo, parsedRow);
-    rowsList.push(parsedRow);
   }
 
   if (rowsList.length === 0) {

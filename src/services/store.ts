@@ -389,7 +389,11 @@ class AppStore {
       const sProg = (s.programa || '').toUpperCase().trim();
       const sTipo = (s.tipo_pedido || '').toUpperCase().trim();
 
-      const unitMatches = sUnit === 'TODAS' || sUnit === 'TODOS' || sUnit === unitUpper || sUnit.split(/[,;\s]+/).includes(unitUpper);
+      const unitMatches = sUnit === 'TODAS' || sUnit === 'TODOS' || 
+                          sUnit === unitUpper || 
+                          unitUpper.includes(sUnit) || 
+                          sUnit.includes(unitUpper) ||
+                          sUnit.split(/[,;\s]+/).some(part => part && (part === unitUpper || unitUpper.includes(part) || part.includes(unitUpper)));
       const progMatches = sProg === progUpper;
       const tipoMatches = sTipo === tipoUpper;
 

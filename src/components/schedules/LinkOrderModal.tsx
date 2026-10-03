@@ -3,6 +3,7 @@ import { useStore } from '../../hooks/useStore';
 import { Order, Schedule, OrderStatus } from '../../types';
 import { showToast } from '../common/Toast';
 import { TypeTag, StatusBadge } from '../common/StatusBadge';
+import { getCanonicalUnit } from '../../utils/unitNormalizer';
 import { 
   X, 
   Search, 
@@ -39,7 +40,7 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
   monthNumber,
   availableSchedules,
 }) => {
-  const { orders, units, currentUser, updateOrder } = useStore();
+  const { orders, schedules, units, currentUser, updateOrder, addSchedule } = useStore();
 
   // Search & Filter states
   const [searchTerm, setSearchTerm] = useState('');
@@ -182,32 +183,71 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
   const handleLink = () => {
     if (!selectedOrderId || !selectedOrder) return;
 
+    let scheduleIdToAssign = (selectedScheduleId !== 'NONE' && selectedScheduleId !== 'KEEP' && selectedScheduleId !== 'AUTO_CREATE')
+      ? selectedScheduleId 
+      : null;
+
+    // Guarantee the order is linked to a valid schedule on this day
+    if (!scheduleIdToAssign) {
+      const ordUnit = (selectedOrder.unidade || '').toUpperCase().trim();
+      const canonical = getCanonicalUnit(selectedOrder.unidade);
+      const sigla = (canonical.sigla || '').toUpperCase().trim();
+      const targetDeliveryDate = dataEntrega || targetDate;
+
+      // 1. Look for existing schedule on this day for this unit
+      const existing = schedules.find(s => {
+        if (s.data_entrega !== targetDeliveryDate) return false;
+        const sUnit = (s.unidade || '').toUpperCase().trim();
+        return sUnit === ordUnit || sUnit === sigla || sUnit.includes(sigla) || ordUnit.includes(sUnit) ||
+               (s.unidades && s.unidades.some(u => {
+                 const uUp = u.toUpperCase().trim();
+                 return uUp === sigla || uUp === ordUnit;
+               }));
+      });
+
+      if (existing) {
+        scheduleIdToAssign = existing.id;
+      } else {
+        // Auto-create a dedicated master schedule for this day and unit
+        const createdSch = addSchedule({
+          nome: `Cronograma - ${selectedOrder.unidade} (${dayNumber}/${monthNumber === 9 ? '09' : '10'})`,
+          competencia: `${monthNumber === 9 ? 'SET' : 'OUT'}/26`,
+          unidade: selectedOrder.unidade,
+          unidades: [selectedOrder.unidade],
+          programa: selectedOrder.programa || 'Hospitalar',
+          tipo_pedido: selectedOrder.tipo || 'Mensal',
+          data_limite_solicitacao: dataSolicitacao || targetDeliveryDate,
+          data_limite_aprovacao: dataAprovacao || targetDeliveryDate,
+          data_separacao: dataInicioSeparacao || targetDeliveryDate,
+          data_expedicao: dataExpedicao || targetDeliveryDate,
+          data_entrega: targetDeliveryDate,
+          observacao: 'Criado via vinculação rápida no calendário',
+          ativo: true,
+        });
+        scheduleIdToAssign = createdSch.id;
+      }
+    }
+
+    const targetDeliveryDate = dataEntrega || targetDate;
+
     const updates: Partial<Order> = {
+      cronograma_id: scheduleIdToAssign,
+      cronograma_vinculo: 'MANUAL',
+      data_prevista_entrega: targetDeliveryDate,
       data_solicitacao: dataSolicitacao || undefined,
       data_aprovacao: dataAprovacao || undefined,
       data_inicio_separacao: dataInicioSeparacao || undefined,
       data_expedicao: dataExpedicao || undefined,
-      data_prevista_entrega: dataEntrega || targetDate,
       validada_em: dataAprovacao ? `${dataAprovacao} 10:00` : selectedOrder.validada_em,
       separado_em: dataInicioSeparacao ? `${dataInicioSeparacao} 14:00` : selectedOrder.separado_em,
       expedido_em: dataExpedicao ? `${dataExpedicao} 16:00` : selectedOrder.expedido_em,
     };
 
-    if (selectedScheduleId !== 'KEEP') {
-      if (selectedScheduleId === 'NONE') {
-        updates.cronograma_id = null;
-        updates.cronograma_vinculo = 'MANUAL';
-      } else {
-        updates.cronograma_id = selectedScheduleId;
-        updates.cronograma_vinculo = 'MANUAL';
-      }
-    }
-
     updateOrder(
       selectedOrderId,
       updates,
       currentUser,
-      `Vinculado ao dia ${dayNumber}/${monthNumber === 9 ? '09' : '10'} no calendário com datas de etapas configuradas`
+      `Vinculado ao dia ${dayNumber}/${monthNumber === 9 ? '09' : '10'} no calendário com cronograma ativo`
     );
 
     showToast(
@@ -394,11 +434,30 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                       setDataEntrega(targetDate || extractDateOnly(order.data_prevista_entrega));
 
                       // Try to match available schedule for this order's unit
-                      const matchingSch = availableSchedules.find(s => s.unidade === order.unidade);
+                      const ordUnit = (order.unidade || '').toUpperCase().trim();
+                      const canonical = getCanonicalUnit(order.unidade);
+                      const sigla = (canonical.sigla || '').toUpperCase().trim();
+                      const nome = (canonical.nome || '').toUpperCase().trim();
+
+                      const matchingSch = availableSchedules.find(s => {
+                        const sUnit = (s.unidade || '').toUpperCase().trim();
+                        return sUnit === ordUnit || sUnit === sigla || sUnit === nome ||
+                               sUnit.includes(sigla) || ordUnit.includes(sUnit) ||
+                               (s.unidades && s.unidades.some(u => {
+                                 const uUp = u.toUpperCase().trim();
+                                 return uUp === sigla || uUp === ordUnit || uUp === nome;
+                               }));
+                      });
+
                       if (matchingSch) {
                         setSelectedScheduleId(matchingSch.id);
+                        if (matchingSch.data_limite_solicitacao && !dataSolicitacao) setDataSolicitacao(matchingSch.data_limite_solicitacao);
+                        if (matchingSch.data_limite_aprovacao && !dataAprovacao) setDataAprovacao(matchingSch.data_limite_aprovacao);
+                        if (matchingSch.data_separacao && !dataInicioSeparacao) setDataInicioSeparacao(matchingSch.data_separacao);
+                        if (matchingSch.data_expedicao && !dataExpedicao) setDataExpedicao(matchingSch.data_expedicao);
+                        if (matchingSch.data_entrega) setDataEntrega(matchingSch.data_entrega);
                       } else {
-                        setSelectedScheduleId('NONE');
+                        setSelectedScheduleId('AUTO_CREATE');
                       }
                     }}
                     className={`p-3 flex items-center justify-between gap-3 text-xs cursor-pointer transition-all ${
@@ -532,27 +591,28 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
 
               <div>
                 <label className="text-[10px] font-bold text-slate-500 block mb-1">
-                  Vincular ao Cronograma Mestre da Unidade:
+                  Vincular ao Cronograma da Unidade:
                 </label>
                 <select
                   value={selectedScheduleId}
                   onChange={(e) => {
                     const newSchId = e.target.value;
                     setSelectedScheduleId(newSchId);
-                    if (newSchId !== 'NONE') {
+                    if (newSchId !== 'NONE' && newSchId !== 'AUTO_CREATE') {
                       const found = availableSchedules.find(s => s.id === newSchId);
                       if (found) {
-                        if (found.data_limite_solicitacao && !dataSolicitacao) setDataSolicitacao(found.data_limite_solicitacao);
-                        if (found.data_limite_aprovacao && !dataAprovacao) setDataAprovacao(found.data_limite_aprovacao);
-                        if (found.data_separacao && !dataInicioSeparacao) setDataInicioSeparacao(found.data_separacao);
-                        if (found.data_expedicao && !dataExpedicao) setDataExpedicao(found.data_expedicao);
+                        if (found.data_limite_solicitacao) setDataSolicitacao(found.data_limite_solicitacao);
+                        if (found.data_limite_aprovacao) setDataAprovacao(found.data_limite_aprovacao);
+                        if (found.data_separacao) setDataInicioSeparacao(found.data_separacao);
+                        if (found.data_expedicao) setDataExpedicao(found.data_expedicao);
                         if (found.data_entrega) setDataEntrega(found.data_entrega);
                       }
                     }
                   }}
                   className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 >
-                  <option value="NONE">Apenas agendar a data no Calendário (Sem vincular cronograma)</option>
+                  <option value="AUTO_CREATE">✨ Gerar e vincular ao cronograma do dia {dayNumber}/{monthNumber === 9 ? '09' : '10'}</option>
+                  <option value="NONE">Vincular diretamente ao dia {dayNumber}/{monthNumber === 9 ? '09' : '10'} no Calendário</option>
                   {availableSchedules.map(s => (
                     <option key={s.id} value={s.id}>
                       {s.unidade} — {s.programa} ({s.competencia}) [Entrega: {s.data_entrega}]

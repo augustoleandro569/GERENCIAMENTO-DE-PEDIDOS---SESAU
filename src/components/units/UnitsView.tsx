@@ -267,7 +267,13 @@ export const UnitsView: React.FC = () => {
       {viewLayout === 'grid' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredUnits.map((unit) => {
-            const unitOrdersCount = orders.filter(o => o.unidade && o.unidade.toUpperCase() === unit.sigla.toUpperCase()).length;
+            const sig = (unit.sigla || '').toUpperCase();
+            const nom = (unit.nome || '').toUpperCase();
+            const unitOrdersCount = orders.filter(o => {
+              if (!o.unidade) return false;
+              const u = o.unidade.toUpperCase();
+              return u === sig || u === nom || u.includes(sig) || nom.includes(u);
+            }).length;
             const isEditingThisName = quickEditId === unit.id;
 
             return (
@@ -414,7 +420,13 @@ export const UnitsView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredUnits.map((unit) => {
-                  const unitOrdersCount = orders.filter(o => o.unidade && o.unidade.toUpperCase() === unit.sigla.toUpperCase()).length;
+                  const sig = (unit.sigla || '').toUpperCase();
+                  const nom = (unit.nome || '').toUpperCase();
+                  const unitOrdersCount = orders.filter(o => {
+                    if (!o.unidade) return false;
+                    const u = o.unidade.toUpperCase();
+                    return u === sig || u === nom || u.includes(sig) || nom.includes(u);
+                  }).length;
                   const isEditingThisName = quickEditId === unit.id;
 
                   return (
@@ -719,7 +731,13 @@ export const UnitsView: React.FC = () => {
 
               {/* Informação sobre pedidos vinculados */}
               {(() => {
-                const linkedCount = orders.filter(o => o.unidade && o.unidade.toUpperCase() === unitToDelete.sigla.toUpperCase()).length;
+                const sig = (unitToDelete.sigla || '').toUpperCase();
+                const nom = (unitToDelete.nome || '').toUpperCase();
+                const linkedCount = orders.filter(o => {
+                  if (!o.unidade) return false;
+                  const u = o.unidade.toUpperCase();
+                  return u === sig || u === nom || u.includes(sig) || nom.includes(u);
+                }).length;
                 if (linkedCount > 0) {
                   return (
                     <div className="mt-3.5 p-3 bg-amber-50 border border-amber-200 rounded-xl text-left flex items-start gap-2.5">
