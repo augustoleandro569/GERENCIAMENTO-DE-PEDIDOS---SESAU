@@ -669,6 +669,52 @@ class AppStore {
     this.notify();
   }
 
+  // Batch update multiple orders efficiently
+  public updateOrders(
+    orderIds: string[],
+    partial: Partial<Order> | ((order: Order) => Partial<Order>),
+    responsavel?: string | UserProfile,
+    observacao?: string
+  ): number {
+    if (!orderIds || orderIds.length === 0) return 0;
+    const orderSet = new Set(orderIds);
+    const now = new Date().toISOString();
+    const user = typeof responsavel === 'object' && responsavel !== null ? responsavel.nome : (responsavel || this.currentUser.nome);
+    let updatedCount = 0;
+
+    for (let i = 0; i < this.orders.length; i++) {
+      const current = this.orders[i];
+      if (orderSet.has(current.id)) {
+        const patch = typeof partial === 'function' ? partial(current) : partial;
+        this.orders[i] = {
+          ...current,
+          ...patch,
+          atualizado_em: now,
+        };
+        updatedCount++;
+
+        if (observacao) {
+          this.addAuditLog({
+            pedido_id: current.id,
+            codigo_pedido: current.codigo,
+            usuario: user,
+            data_hora: now,
+            campo_alterado: 'Atualização de Dados em Lote',
+            valor_anterior: 'Registro Anterior',
+            novo_valor: observacao,
+          });
+        }
+        dbSync.saveOrder(this.orders[i]);
+      }
+    }
+
+    if (updatedCount > 0) {
+      this.save(STORAGE_KEYS.ORDERS, this.orders);
+      this.notify();
+    }
+    return updatedCount;
+  }
+
   // Process Import idempotently and feed the database directly
   public async processImport(
     analysis: ImportAnalysis, 

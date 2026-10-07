@@ -4,6 +4,8 @@ import { useStore } from '../../hooks/useStore';
 import { parseDateSafe, formatDate, formatShortDate, calculateDeadlineSituation } from '../../utils/dateUtils';
 import { exportOrdersToSpreadsheet } from '../../utils/spreadsheet';
 import { showToast } from '../common/Toast';
+import { LinusVectorSvg } from '../common/Logo';
+import { generateConsolidatedPdf } from '../../utils/pdfExport';
 import * as XLSX from 'xlsx';
 import {
   FileSpreadsheet,
@@ -29,7 +31,8 @@ import {
   Layers,
   Building2,
   CalendarDays,
-  FileText
+  FileText,
+  Users
 } from 'lucide-react';
 
 interface ScheduleReportTabProps {
@@ -49,27 +52,18 @@ interface StatusMeta {
 
 const STATUS_TAXONOMY: StatusMeta[] = [
   {
-    key: 'AGUARDANDO_APROVACAO',
-    label: 'Aguardando Validação / Aprovação',
-    color: '#D97706',
-    bgBadge: 'bg-amber-50 border-amber-200 text-amber-900',
-    textColor: 'text-amber-700',
-    dotColor: 'bg-amber-500',
-    matches: (s) => s === 'Aguardando Aprovação' || s === 'Aguardando Validação' || s === 'Aguardando validacao' || s === 'Aguardando aprovacao' || s === 'Rascunho',
-  },
-  {
     key: 'APROVADA',
     label: 'Aprovada',
     color: '#10B981',
     bgBadge: 'bg-emerald-50 border-emerald-200 text-emerald-900',
     textColor: 'text-emerald-700',
     dotColor: 'bg-emerald-500',
-    matches: (s) => s === 'Aprovada' || s === 'Aprovado' || s === 'Validada' || s === 'Validado',
+    matches: (s) => s === 'Aprovada' || s === 'Aprovado' || s === 'Validada' || s === 'Validado' || s === 'Aguardando Aprovação' || s === 'Rascunho',
   },
   {
     key: 'AGUARDANDO_SEPARACAO',
     label: 'Aguardando separação',
-    color: '#854D0E',
+    color: '#78350F',
     bgBadge: 'bg-amber-100/60 border-amber-300 text-amber-950',
     textColor: 'text-amber-800',
     dotColor: 'bg-amber-700',
@@ -87,7 +81,7 @@ const STATUS_TAXONOMY: StatusMeta[] = [
   {
     key: 'AGUARDANDO_CONFERENCIA',
     label: 'Aguardando conferência',
-    color: '#CA8A04',
+    color: '#A16207',
     bgBadge: 'bg-yellow-50 border-yellow-200 text-yellow-950',
     textColor: 'text-yellow-700',
     dotColor: 'bg-yellow-600',
@@ -96,7 +90,7 @@ const STATUS_TAXONOMY: StatusMeta[] = [
   {
     key: 'EM_CONFERENCIA',
     label: 'Em conferência',
-    color: '#14B8A6',
+    color: '#0D9488',
     bgBadge: 'bg-teal-50 border-teal-200 text-teal-950',
     textColor: 'text-teal-700',
     dotColor: 'bg-teal-600',
@@ -105,7 +99,7 @@ const STATUS_TAXONOMY: StatusMeta[] = [
   {
     key: 'EXPEDIDO',
     label: 'Expedido',
-    color: '#EC4899',
+    color: '#DB2777',
     bgBadge: 'bg-pink-50 border-pink-200 text-pink-950',
     textColor: 'text-pink-700',
     dotColor: 'bg-pink-500',
@@ -114,7 +108,7 @@ const STATUS_TAXONOMY: StatusMeta[] = [
   {
     key: 'EM_TRANSPORTE',
     label: 'Em transporte',
-    color: '#64748B',
+    color: '#6B7280',
     bgBadge: 'bg-slate-100 border-slate-300 text-slate-900',
     textColor: 'text-slate-700',
     dotColor: 'bg-slate-500',
@@ -132,7 +126,7 @@ const STATUS_TAXONOMY: StatusMeta[] = [
   {
     key: 'ENTREGUE',
     label: 'Entregue',
-    color: '#EF4444', // Red/Coral matches the user's dashboard image!
+    color: '#EF4444',
     bgBadge: 'bg-red-50 border-red-200 text-red-950',
     textColor: 'text-red-700',
     dotColor: 'bg-red-500',
@@ -497,6 +491,42 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
     showToast('success', 'CSV Exportado!', `${filteredOrders.length} pedidos exportados em CSV.`);
   };
 
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState<string>('');
+
+  // Generate Consolidated PDF File
+  const handleExportConsolidatedPDF = async () => {
+    const reportEl = document.getElementById('visual-report-consolidated');
+    if (!reportEl) {
+      showToast('error', 'Erro ao localizar relatório', 'Elemento do relatório não encontrado na página.');
+      return;
+    }
+
+    try {
+      setIsGeneratingPdf(true);
+      setPdfProgress('Iniciando...');
+      const dateTag = `${startDate || 'inicio'}_${endDate || 'fim'}`;
+      const typeTag = selectedOrderType !== 'ALL' ? selectedOrderType.toLowerCase() : 'geral';
+      const filename = `relatorio_consolidado_${typeTag}_sesau_linus_${dateTag}.pdf`;
+
+      await generateConsolidatedPdf(reportEl, {
+        filename,
+        onProgress: (msg, percent) => {
+          setPdfProgress(`${percent}%`);
+        }
+      });
+
+      showToast('success', 'PDF Consolidado Gerado!', `Arquivo ${filename} baixado com sucesso.`);
+    } catch (err: unknown) {
+      console.error('PDF generation error:', err);
+      const errMsg = err instanceof Error ? err.message : 'Erro ao renderizar o documento.';
+      showToast('error', 'Falha ao gerar PDF', errMsg);
+    } finally {
+      setIsGeneratingPdf(false);
+      setPdfProgress('');
+    }
+  };
+
   // Print Report
   const handlePrint = () => {
     window.print();
@@ -523,6 +553,26 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
 
           {/* Export Actions */}
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Primary Action: Gerar Arquivo Consolidado em PDF */}
+            <button
+              onClick={handleExportConsolidatedPDF}
+              disabled={isGeneratingPdf || filteredOrders.length === 0}
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer ring-2 ring-blue-500/20"
+              title="Gerar e baixar o arquivo oficial consolidado em PDF com logotipo da Linus Soluções"
+            >
+              {isGeneratingPdf ? (
+                <>
+                  <RotateCcw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Gerando PDF ({pdfProgress || '...'})</span>
+                </>
+              ) : (
+                <>
+                  <FileText className="w-3.5 h-3.5 text-blue-200" />
+                  <span>Gerar PDF Consolidado</span>
+                </>
+              )}
+            </button>
+
             <button
               onClick={handleExportExcel}
               disabled={filteredOrders.length === 0}
@@ -549,7 +599,7 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
               title="Imprimir relatório gerencial ou salvar como PDF"
             >
               <Printer className="w-3.5 h-3.5 text-slate-600" />
-              <span>Imprimir / PDF</span>
+              <span>Imprimir</span>
             </button>
           </div>
         </div>
@@ -699,83 +749,96 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
         </div>
       </div>
 
-      {/* 2. THE VISUAL EXECUTIVE REPORT CONTAINER (MATCHING USER DASHBOARD IMAGE) */}
-      <div className="bg-white rounded-3xl border border-slate-300 shadow-md p-5 sm:p-7 space-y-6 print:border-none print:shadow-none print:p-0">
+      {/* 2. THE VISUAL EXECUTIVE REPORT CONTAINER (MATCHING USER DASHBOARD IMAGE EXACTLY) */}
+      <div 
+        id="visual-report-consolidated" 
+        data-pdf-page="1" 
+        className="bg-[#f0f5ff] rounded-3xl border-2 border-[#1d4ed8] shadow-md p-4 sm:p-6 space-y-3.5 print:border-none print:shadow-none print:p-0 print:bg-white"
+      >
         {/* Report Top Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b-2 border-slate-200">
+        <div className="bg-white rounded-2xl border border-blue-200/80 p-4 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-blue-950 text-white flex items-center justify-center shrink-0 shadow-xs">
-              <ClipboardList className="w-6 h-6 text-blue-300" />
+            <div className="w-14 h-14 rounded-full bg-[#0c2340] text-white flex items-center justify-center shrink-0 shadow-xs">
+              <div className="relative">
+                <ClipboardList className="w-7 h-7 text-blue-200" />
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400 absolute -bottom-1 -right-1" />
+              </div>
             </div>
+
+            <div className="h-10 w-0.5 bg-slate-300 hidden sm:block" />
+
             <div>
-              <h1 className="text-xl sm:text-2xl font-black text-blue-950 tracking-tight flex items-center gap-2 flex-wrap">
-                <span>
-                  {selectedOrderType !== 'ALL'
-                    ? `RESUMO DE PEDIDOS ${selectedOrderType.toUpperCase()}S — SESAU/AL`
-                    : 'RESUMO GERAL DE PEDIDOS POR CRONOGRAMA — SESAU/AL'}
-                </span>
+              <h1 className="text-xl sm:text-2xl font-black text-[#0c2340] tracking-tight uppercase">
+                {selectedOrderType !== 'ALL'
+                  ? `RESUMO DE PEDIDOS ${selectedOrderType.toUpperCase()}S — SESAU/AL`
+                  : 'RESUMO DE PEDIDOS EMERGENCIAIS — SESAU/AL'}
               </h1>
-              <p className="text-xs text-blue-700 font-semibold mt-0.5 flex items-center gap-2 flex-wrap">
+              <p className="text-xs text-[#1d4ed8] font-semibold mt-0.5 flex items-center gap-2 flex-wrap">
                 <span>Pedidos por data e status da situação</span>
                 <span>•</span>
-                <span className="font-mono">
-                  Período: {startDate ? formatDate(startDate) : 'Início'} a {endDate ? formatDate(endDate) : 'Fim'}
-                </span>
-                <span>•</span>
-                <span className="text-slate-500 font-normal">
+                <span>
                   Atualizado em {new Date().toLocaleDateString('pt-BR')}
                 </span>
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 self-end md:self-auto shrink-0">
-            <div className="text-right">
-              <div className="text-xs font-black text-slate-800 tracking-wider">SESAU / AL</div>
-              <div className="text-[10px] font-mono text-slate-500 font-semibold">Abastecimento Hospitalar</div>
-            </div>
-            <div className="w-9 h-9 rounded-xl bg-orange-500 text-white flex items-center justify-center font-black text-sm shadow-xs">
-              L
+          <div className="flex items-center gap-3.5 self-end md:self-auto shrink-0">
+            <div className="h-10 w-0.5 bg-slate-300 hidden sm:block" />
+            {/* Logo Oficial Linus Soluções */}
+            <div className="flex items-center gap-2" title="Linus Soluções">
+              <LinusVectorSvg className="h-10 sm:h-11 w-auto" />
             </div>
           </div>
         </div>
 
-        {/* 3. STATUS RIBBON KPI CARDS (MATCHING THE 9 PILLS IN THE IMAGE) */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-2">
+        {/* 3. STATUS RIBBON KPI CARDS (EXACT 9 CARDS IN THE IMAGE) */}
+        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2">
           {/* Total de Pedidos */}
-          <div className="p-3 bg-white rounded-2xl border-2 border-slate-300 flex flex-col items-center justify-center text-center shadow-2xs">
-            <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center mb-1">
-              <FileSpreadsheet className="w-4 h-4 text-blue-300" />
+          <div className="p-3 bg-white rounded-2xl border border-blue-200/80 flex flex-col items-center justify-center text-center shadow-2xs">
+            <div className="flex items-center justify-center gap-2">
+              <div className="w-8 h-8 rounded-full border-2 border-[#0c2340] bg-white text-[#0c2340] flex items-center justify-center shadow-2xs shrink-0">
+                <FileSpreadsheet className="w-4 h-4" />
+              </div>
+              <div className="text-xl sm:text-2xl font-black font-mono text-[#0c2340] leading-none">
+                {filteredOrders.length}
+              </div>
             </div>
-            <div className="text-xl font-black font-mono text-slate-900">
-              {filteredOrders.length}
-            </div>
-            <span className="text-[10px] font-bold text-slate-600 tracking-tight">
+            <span className="text-[11px] font-semibold text-slate-700 tracking-tight mt-1 text-center whitespace-nowrap">
               Total de pedidos
             </span>
           </div>
 
-          {/* 8 Status Badges */}
-          {STATUS_TAXONOMY.map(statusMeta => {
+          {/* 8 Status Badges (excluding Cancelado in Ribbon, matching image) */}
+          {STATUS_TAXONOMY.filter(s => s.key !== 'CANCELADO').map(statusMeta => {
             const count = statusSummary.counts[statusMeta.key] || 0;
             return (
               <div
                 key={statusMeta.key}
-                className="p-2.5 bg-white rounded-2xl border border-slate-200/90 hover:border-slate-400 flex flex-col items-center justify-center text-center shadow-2xs transition-all"
+                className="p-3 bg-white rounded-2xl border border-blue-200/80 flex flex-col items-center justify-center text-center shadow-2xs"
               >
-                <div 
-                  className="w-7 h-7 rounded-full flex items-center justify-center mb-1 text-white shadow-2xs"
-                  style={{ backgroundColor: statusMeta.color }}
-                >
-                  <span className="w-2.5 h-2.5 rounded-full bg-white/90" />
+                <div className="flex items-center justify-center gap-2">
+                  <div 
+                    className="w-8 h-8 rounded-full border-2 bg-white flex items-center justify-center shadow-2xs shrink-0"
+                    style={{ borderColor: statusMeta.color, color: statusMeta.color }}
+                  >
+                    {statusMeta.key === 'APROVADA' && <CheckCircle2 className="w-4 h-4" />}
+                    {statusMeta.key === 'AGUARDANDO_SEPARACAO' && <Boxes className="w-4 h-4" />}
+                    {statusMeta.key === 'EM_SEPARACAO' && <Boxes className="w-4 h-4" />}
+                    {statusMeta.key === 'AGUARDANDO_CONFERENCIA' && <Users className="w-4 h-4" />}
+                    {statusMeta.key === 'EM_CONFERENCIA' && <ClipboardList className="w-4 h-4" />}
+                    {statusMeta.key === 'EXPEDIDO' && <Send className="w-4 h-4" />}
+                    {statusMeta.key === 'EM_TRANSPORTE' && <Truck className="w-4 h-4" />}
+                    {statusMeta.key === 'ENTREGUE' && <CheckCircle2 className="w-4 h-4" />}
+                  </div>
+                  <div 
+                    className="text-xl sm:text-2xl font-black font-mono leading-none"
+                    style={{ color: statusMeta.color }}
+                  >
+                    {count}
+                  </div>
                 </div>
-                <div 
-                  className="text-lg font-black font-mono leading-none my-0.5"
-                  style={{ color: statusMeta.color }}
-                >
-                  {count}
-                </div>
-                <span className="text-[10px] font-semibold text-slate-700 tracking-tight leading-tight line-clamp-2">
+                <span className="text-[11px] font-semibold text-slate-700 tracking-tight mt-1 text-center whitespace-nowrap">
                   {statusMeta.label}
                 </span>
               </div>
@@ -784,73 +847,75 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
         </div>
 
         {/* 4. TWO-COLUMN MIDDLE SECTION (DISTRIBUIÇÃO DIÁRIA + RESUMO POR STATUS) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-start">
           {/* LEFT: Distribuição diária por status (Horizontal Stacked Bar Chart) */}
-          <div className="lg:col-span-8 bg-slate-50/70 p-4 sm:p-5 rounded-2xl border border-slate-300 shadow-2xs space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-              <h2 className="text-xs sm:text-sm font-black text-blue-950 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-1.5 h-4 bg-blue-700 rounded-sm" />
-                <span>Distribuição diária por status</span>
+          <div className="lg:col-span-8 bg-white p-4 sm:p-5 rounded-2xl border border-blue-200/80 shadow-2xs space-y-3">
+            <div className="flex items-center gap-2 pb-2 border-b border-blue-100">
+              <span className="w-1.5 h-5 bg-[#1d4ed8] rounded-full mr-1" />
+              <h2 className="text-sm font-black text-[#0c2340] tracking-tight">
+                Distribuição diária por status
               </h2>
-              <span className="text-[11px] font-bold text-slate-500 font-mono">
-                {dailyDistribution.length} datas mapeadas
-              </span>
             </div>
 
             {dailyDistribution.length > 0 ? (
-              <div className="space-y-2.5">
-                {dailyDistribution.map(dayItem => (
-                  <div key={dayItem.dateStr} className="flex items-center gap-3 text-xs">
-                    {/* Date Label */}
-                    <div className="w-20 font-mono text-[11px] font-bold text-slate-700 shrink-0 text-right">
-                      {dayItem.displayDate}
+              <div className="space-y-2">
+                {/* Stacked Bars List */}
+                <div className="space-y-2">
+                  {dailyDistribution.map(dayItem => (
+                    <div key={dayItem.dateStr} className="flex items-center gap-2 text-xs">
+                      {/* Date Label in blue */}
+                      <div className="w-20 font-mono text-xs font-semibold text-[#1d4ed8] shrink-0 text-right pr-1">
+                        {dayItem.displayDate}
+                      </div>
+
+                      {/* Stacked Bar with inner numbers */}
+                      <div className="flex-1 bg-slate-100 h-6 sm:h-7 rounded-xs overflow-hidden flex items-stretch border border-slate-200 relative shadow-2xs">
+                        {STATUS_TAXONOMY.map(stMeta => {
+                          const count = dayItem.statusCounts[stMeta.key] || 0;
+                          if (count === 0) return null;
+                          const pctOfMax = (count / maxDayTotal) * 100;
+
+                          return (
+                            <div
+                              key={stMeta.key}
+                              style={{
+                                width: `${pctOfMax}%`,
+                                backgroundColor: stMeta.color,
+                              }}
+                              className="h-full flex items-center justify-center text-white text-[11px] font-black font-mono transition-all hover:brightness-110"
+                              title={`${dayItem.displayDate} - ${stMeta.label}: ${count} pedido(s)`}
+                            >
+                              {count >= 1 ? count : ''}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Total on Right in Blue */}
+                      <div className="w-20 font-mono text-xs font-black text-[#1d4ed8] shrink-0 pl-1 whitespace-nowrap">
+                        Total {dayItem.total}
+                      </div>
                     </div>
+                  ))}
+                </div>
 
-                    {/* Stacked Bar */}
-                    <div className="flex-1 bg-slate-200/70 h-7 rounded-lg overflow-hidden flex items-stretch border border-slate-300 relative shadow-2xs">
-                      {STATUS_TAXONOMY.map(stMeta => {
-                        const count = dayItem.statusCounts[stMeta.key] || 0;
-                        if (count === 0) return null;
-                        const pctOfMax = (count / maxDayTotal) * 100;
-
-                        return (
-                          <div
-                            key={stMeta.key}
-                            style={{
-                              width: `${pctOfMax}%`,
-                              backgroundColor: stMeta.color,
-                            }}
-                            className="h-full flex items-center justify-center text-white text-[10px] font-black font-mono transition-all hover:brightness-110"
-                            title={`${dayItem.displayDate} - ${stMeta.label}: ${count} pedido(s)`}
-                          >
-                            {count >= 2 ? count : ''}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Total on Right */}
-                    <div className="w-16 font-mono text-xs font-black text-blue-900 shrink-0">
-                      Total {dayItem.total}
-                    </div>
-                  </div>
-                ))}
-
-                {/* X-Axis Scale Indicator */}
-                <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[10px] font-mono text-slate-400 pl-24 pr-16">
+                {/* X-Axis Scale Indicator in blue */}
+                <div className="pt-2 border-t border-slate-200 flex items-center justify-between text-[11px] font-mono text-[#2563eb] pl-22 pr-22 font-semibold">
                   <span>0</span>
-                  <span>{Math.round(maxDayTotal * 0.25)}</span>
-                  <span>{Math.round(maxDayTotal * 0.5)}</span>
-                  <span>{Math.round(maxDayTotal * 0.75)}</span>
-                  <span>{maxDayTotal}</span>
+                  <span>5</span>
+                  <span>10</span>
+                  <span>15</span>
+                  <span>20</span>
+                  <span>25</span>
+                  <span>30</span>
                 </div>
-                <div className="text-center text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Quantidade de pedidos por dia
+                <div className="text-center text-xs font-medium text-[#1d4ed8]">
+                  Quantidade de pedidos
                 </div>
 
-                {/* Chart Legend matching image */}
-                <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[10px] font-semibold text-slate-700">
-                  {STATUS_TAXONOMY.map(st => (
+                {/* Chart Legend matching image exactly */}
+                <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center justify-center gap-x-3.5 gap-y-1.5 text-[10px] font-semibold text-slate-700">
+                  {STATUS_TAXONOMY.filter(st => st.key !== 'CANCELADO').map(st => (
                     <div key={st.key} className="flex items-center gap-1.5">
                       <span 
                         className="w-3 h-3 rounded-xs shrink-0" 
@@ -862,23 +927,23 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
                 </div>
               </div>
             ) : (
-              <div className="p-12 text-center text-xs text-slate-500 italic bg-white rounded-xl border border-slate-200">
-                Nenhum pedido encontrado no intervalo de datas selecionado ({startDate} a {endDate}).
+              <div className="p-8 text-center text-xs text-slate-500 italic bg-white rounded-xl border border-slate-200">
+                Nenhum pedido encontrado no intervalo de datas selecionado.
               </div>
             )}
           </div>
 
-          {/* RIGHT: Resumo por status (Table matching image) */}
-          <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-300 shadow-2xs overflow-hidden">
-            <div className="p-3 bg-blue-950 text-white flex items-center justify-between">
-              <h2 className="text-xs sm:text-sm font-black uppercase tracking-wider flex items-center gap-2">
-                <span className="w-1.5 h-4 bg-blue-400 rounded-sm" />
-                <span>Resumo por status</span>
+          {/* RIGHT: Resumo por status (Table matching image exactly) */}
+          <div className="lg:col-span-4 bg-white rounded-2xl border border-blue-200/80 shadow-2xs overflow-hidden">
+            <div className="p-3 border-b border-blue-100 flex items-center gap-2">
+              <span className="w-1.5 h-5 bg-[#1d4ed8] rounded-full mr-1" />
+              <h2 className="text-sm font-black text-[#0c2340] tracking-tight">
+                Resumo por status
               </h2>
             </div>
 
             <table className="w-full text-left text-xs">
-              <thead className="bg-blue-900 text-white text-[11px] font-bold uppercase tracking-wider">
+              <thead className="bg-[#0c2340] text-white text-[11px] font-bold uppercase tracking-wider">
                 <tr>
                   <th className="py-2.5 px-4">Status</th>
                   <th className="py-2.5 px-4 text-right">Total</th>
@@ -888,27 +953,27 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
                 {STATUS_TAXONOMY.map(stMeta => {
                   const count = statusSummary.counts[stMeta.key] || 0;
                   return (
-                    <tr key={stMeta.key} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-2.5 px-4 flex items-center gap-2.5">
+                    <tr key={stMeta.key} className="hover:bg-blue-50/50 transition-colors">
+                      <td className="py-2 px-4 flex items-center gap-2.5">
                         <span 
                           className="w-3 h-3 rounded-full shrink-0 shadow-2xs" 
                           style={{ backgroundColor: stMeta.color }}
                         />
-                        <span className="font-semibold text-slate-800">{stMeta.label}</span>
+                        <span className="font-semibold text-slate-800 text-[11px]">{stMeta.label}</span>
                       </td>
-                      <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-900 text-sm">
+                      <td className="py-2 px-4 text-right font-mono font-bold text-[#0c2340] text-base">
                         {count}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
-              <tfoot className="bg-blue-100/70 border-t-2 border-blue-300 font-bold">
+              <tfoot className="bg-[#dbeafe] border-t-2 border-blue-300 font-bold">
                 <tr>
-                  <td className="py-3 px-4 font-black text-blue-950 text-sm tracking-wider">
+                  <td className="py-3 px-4 font-black text-[#0c2340] text-sm tracking-wider">
                     TOTAL
                   </td>
-                  <td className="py-3 px-4 text-right font-black font-mono text-blue-950 text-base">
+                  <td className="py-3 px-4 text-right font-black font-mono text-[#0c2340] text-lg">
                     {filteredOrders.length}
                   </td>
                 </tr>
@@ -917,62 +982,66 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
           </div>
         </div>
 
-        {/* 5. PRINCIPAIS DESTAQUES (MATCHING BOTTOM OF IMAGE) */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border-2 border-slate-300 shadow-2xs">
+        {/* 5. PRINCIPAIS DESTAQUES (MATCHING BOTTOM OF IMAGE EXACTLY) */}
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-blue-200/80 shadow-2xs">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
             {/* Title Badge */}
             <div className="md:col-span-4 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-blue-950 text-white flex items-center justify-center shrink-0 shadow-xs">
-                <BarChart3 className="w-6 h-6 text-blue-300" />
+              <div className="w-14 h-14 rounded-full bg-[#0c2340] text-white flex items-center justify-center shrink-0 shadow-xs">
+                <TrendingUp className="w-7 h-7 text-blue-200" />
               </div>
+              <div className="h-10 w-0.5 bg-slate-300 hidden sm:block" />
               <div>
-                <h3 className="text-base sm:text-lg font-black text-blue-950 tracking-tight">
+                <h3 className="text-base sm:text-lg font-black text-[#0c2340] tracking-tight">
                   PRINCIPAIS DESTAQUES
                 </h3>
-                <p className="text-[11px] text-slate-500">
-                  Métricas agregadas do período analisado
-                </p>
               </div>
             </div>
 
             {/* Highlight 1: Peak Daily Volume */}
-            <div className="md:col-span-4 flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
-              <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
-                <Calendar className="w-5 h-5" />
+            <div className="md:col-span-4 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-[#e0f2fe] text-[#0284c7] flex items-center justify-center shrink-0">
+                <Calendar className="w-6 h-6" />
               </div>
               <div>
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                <span className="text-xs font-medium text-slate-500 block">
                   Maior volume diário
                 </span>
-                <div className="text-base font-black text-blue-950">
+                <div className="text-lg font-black text-[#0c2340]">
                   {highlights.peakCount} pedidos
                 </div>
-                <span className="text-[11px] text-slate-600 font-medium">
+                <span className="text-xs text-slate-600 font-medium">
                   {highlights.peakDay}
                 </span>
               </div>
             </div>
 
             {/* Highlight 2: Predominant Status */}
-            <div className="md:col-span-4 flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
-                <Trophy className="w-5 h-5" />
+            <div className="md:col-span-4 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-[#dcfce7] text-[#16a34a] flex items-center justify-center shrink-0">
+                <Trophy className="w-6 h-6" />
               </div>
               <div>
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                <span className="text-xs font-medium text-slate-500 block">
                   Status predominante
                 </span>
-                <div className="text-base font-black text-red-600">
+                <div className="text-2xl font-black text-[#ef4444] leading-tight">
                   {highlights.predominantStatus}
                 </div>
-                <span className="text-[11px] text-slate-600 font-medium">
-                  {highlights.predominantCount} pedidos ({highlights.predominantPercent}%)
+                <span className="text-sm font-bold text-slate-800">
+                  {highlights.predominantCount} pedidos
                 </span>
               </div>
             </div>
           </div>
         </div>
 
+        {/* 6. OFFICIAL SOURCE FOOTER STRIP (MATCHING BOTTOM OF IMAGE) */}
+        <div className="bg-[#0c2340] text-white rounded-xl px-4 py-2.5 flex items-center gap-2 text-xs font-mono shadow-xs">
+          <FileSpreadsheet className="w-4 h-4 text-blue-300 shrink-0" />
+          <span>Fonte: PLANILHA ATUALIZADA DE PEDIDOS EMERGENCIAIS - SESAU - 26092026(1).xlsx</span>
+        </div>
+      </div>
         {/* 6. DETAILED ORDERS TABLE FOR AUDIT AND VERIFICATION */}
         <div className="space-y-3 pt-4 border-t border-slate-200 print:hidden">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1101,6 +1170,5 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
           </div>
         </div>
       </div>
-    </div>
-  );
-};
+    );
+  };

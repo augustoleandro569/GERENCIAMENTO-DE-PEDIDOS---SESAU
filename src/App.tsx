@@ -22,6 +22,7 @@ import {
   BarChart3, 
   Upload, 
   Building2,
+  FileText,
   Plus, 
   AlertCircle, 
   RotateCcw,

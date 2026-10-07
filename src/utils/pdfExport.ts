@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 
 export interface GeneratePdfOptions {
   filename?: string;
@@ -41,16 +41,39 @@ export async function generateConsolidatedPdf(
       allowTaint: true,
       logging: false,
       backgroundColor: '#ffffff',
-      windowWidth: 1024,
+      windowWidth: 1280,
     });
 
+    const isLandscape = canvas.width > canvas.height * 1.15;
+    const pageWidth = isLandscape ? 297 : 210;
+    const pageHeight = isLandscape ? 210 : 297;
+    const orientation = isLandscape ? 'landscape' : 'portrait';
+
     if (i > 0) {
-      pdf.addPage('a4', 'portrait');
+      pdf.addPage('a4', orientation);
+    } else {
+      // Configure first page orientation if needed
+      if (isLandscape) {
+        // Switch first page to landscape
+        pdf.deletePage(1);
+        pdf.addPage('a4', 'landscape');
+      }
     }
 
+    const imgRatio = canvas.width / canvas.height;
+    let renderWidth = pageWidth;
+    let renderHeight = renderWidth / imgRatio;
+
+    if (renderHeight > pageHeight) {
+      renderHeight = pageHeight;
+      renderWidth = renderHeight * imgRatio;
+    }
+
+    const offsetX = Math.max(0, (pageWidth - renderWidth) / 2);
+    const offsetY = Math.max(0, (pageHeight - renderHeight) / 2);
+
     const imgData = canvas.toDataURL('image/jpeg', 0.95);
-    // Standard A4 dimensions in mm: 210 x 297
-    pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
+    pdf.addImage(imgData, 'JPEG', offsetX, offsetY, renderWidth, renderHeight, undefined, 'FAST');
   }
 
   options?.onProgress?.('Gerando arquivo final para download...', 95);

@@ -20,7 +20,12 @@ import {
   Building2,
   Tag,
   Activity,
-  Layers
+  Layers,
+  CheckSquare,
+  Square,
+  MinusSquare,
+  Sparkles,
+  ListChecks
 } from 'lucide-react';
 
 interface LinkOrderModalProps {
@@ -40,7 +45,7 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
   monthNumber,
   availableSchedules,
 }) => {
-  const { orders, schedules, units, currentUser, updateOrder, addSchedule } = useStore();
+  const { orders, schedules, units, currentUser, updateOrders, addSchedule } = useStore();
 
   // Search & Filter states
   const [searchTerm, setSearchTerm] = useState('');
@@ -53,11 +58,11 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number | 'ALL'>(25);
 
-  // Selection & Configuration
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [selectedScheduleId, setSelectedScheduleId] = useState<string>('NONE');
+  // Multi-Selection State (permite selecionar múltiplos pedidos em uma única ação)
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [selectedScheduleId, setSelectedScheduleId] = useState<string>('AUTO_BY_UNIT');
 
-  // Phase dates for the linked order
+  // Phase dates for the linked orders
   const [dataSolicitacao, setDataSolicitacao] = useState('');
   const [dataAprovacao, setDataAprovacao] = useState('');
   const [dataInicioSeparacao, setDataInicioSeparacao] = useState('');
@@ -79,7 +84,6 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
     orders.forEach(o => {
       if (o.tipo) set.add(o.tipo);
     });
-    // Add standard ones if not present
     ['Mensal', 'Emergencial', 'Falta', 'Semanal', 'Quinzenal'].forEach(t => set.add(t));
     return Array.from(set).sort();
   }, [orders]);
@@ -116,9 +120,7 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
       if (onlyUnlinked && order.cronograma_id) return false;
-
       if (selectedType !== 'ALL' && order.tipo !== selectedType) return false;
-
       if (selectedStatus !== 'ALL' && order.status_operacional !== selectedStatus) return false;
 
       if (selectedUnit !== 'ALL') {
@@ -152,6 +154,48 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
     return filteredOrders.slice(start, start + pageSize);
   }, [filteredOrders, currentPage, pageSize]);
 
+  // Selected orders collection
+  const selectedOrdersList = useMemo(() => {
+    return orders.filter(o => selectedOrderIds.includes(o.id));
+  }, [orders, selectedOrderIds]);
+
+  // Distinct units in selected orders
+  const selectedUnitsList = useMemo(() => {
+    const set = new Set<string>();
+    selectedOrdersList.forEach(o => {
+      if (o.unidade) set.add(o.unidade);
+    });
+    return Array.from(set);
+  }, [selectedOrdersList]);
+
+  // Selection state helpers
+  const isAllCurrentPageSelected = paginatedOrders.length > 0 && paginatedOrders.every(o => selectedOrderIds.includes(o.id));
+  const isSomeCurrentPageSelected = paginatedOrders.some(o => selectedOrderIds.includes(o.id)) && !isAllCurrentPageSelected;
+
+  const toggleOrderSelection = (id: string) => {
+    setSelectedOrderIds(prev => 
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllCurrentPage = () => {
+    const pageIds = paginatedOrders.map(o => o.id);
+    setSelectedOrderIds(prev => Array.from(new Set([...prev, ...pageIds])));
+  };
+
+  const deselectCurrentPage = () => {
+    const pageIds = new Set(paginatedOrders.map(o => o.id));
+    setSelectedOrderIds(prev => prev.filter(id => !pageIds.has(id)));
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedOrderIds(filteredOrders.map(o => o.id));
+  };
+
+  const clearSelection = () => {
+    setSelectedOrderIds([]);
+  };
+
   const hasActiveFilters = Boolean(
     searchTerm || 
     selectedType !== 'ALL' || 
@@ -169,10 +213,6 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
     setCurrentPage(1);
   };
 
-  if (!isOpen) return null;
-
-  const selectedOrder = orders.find(o => o.id === selectedOrderId);
-
   const extractDateOnly = (val?: string) => {
     if (!val) return '';
     if (val.includes('T')) return val.split('T')[0];
@@ -180,21 +220,40 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
     return val;
   };
 
+  // Pre-fill dates from selected orders if only 1 is selected
+  useEffect(() => {
+    if (isOpen && selectedOrdersList.length === 1) {
+      const order = selectedOrdersList[0];
+      if (!dataSolicitacao) setDataSolicitacao(extractDateOnly(order.data_solicitacao || order.criado_em));
+      if (!dataAprovacao) setDataAprovacao(extractDateOnly(order.data_aprovacao || order.validada_em));
+      if (!dataInicioSeparacao) setDataInicioSeparacao(extractDateOnly(order.data_inicio_separacao || order.separado_em));
+      if (!dataExpedicao) setDataExpedicao(extractDateOnly(order.data_expedicao || order.expedido_em));
+    }
+  }, [isOpen, selectedOrdersList.length, dataSolicitacao, dataAprovacao, dataInicioSeparacao, dataExpedicao]);
+
+  if (!isOpen) return null;
+
   const handleLink = () => {
-    if (!selectedOrderId || !selectedOrder) return;
+    if (selectedOrderIds.length === 0) return;
 
-    let scheduleIdToAssign = (selectedScheduleId !== 'NONE' && selectedScheduleId !== 'KEEP' && selectedScheduleId !== 'AUTO_CREATE')
-      ? selectedScheduleId 
-      : null;
+    const targetDeliveryDate = dataEntrega || targetDate;
+    const monthStr = monthNumber === 9 ? '09' : '10';
+    const monthCycle = monthNumber === 9 ? 'SET/26' : 'OUT/26';
 
-    // Guarantee the order is linked to a valid schedule on this day
-    if (!scheduleIdToAssign) {
-      const ordUnit = (selectedOrder.unidade || '').toUpperCase().trim();
-      const canonical = getCanonicalUnit(selectedOrder.unidade);
+    // Cache de unidade -> scheduleId para reaproveitar ou agrupar cronogramas por unidade
+    const unitScheduleMap = new Map<string, string>();
+
+    const getOrCreateScheduleForUnit = (unitName: string, programName?: string, orderTypeName?: string): string => {
+      const canonical = getCanonicalUnit(unitName);
       const sigla = (canonical.sigla || '').toUpperCase().trim();
-      const targetDeliveryDate = dataEntrega || targetDate;
+      const ordUnit = (unitName || '').toUpperCase().trim();
+      const cacheKey = sigla || ordUnit;
 
-      // 1. Look for existing schedule on this day for this unit
+      if (unitScheduleMap.has(cacheKey)) {
+        return unitScheduleMap.get(cacheKey)!;
+      }
+
+      // 1. Procura cronograma existente nesta data de entrega para esta unidade
       const existing = schedules.find(s => {
         if (s.data_entrega !== targetDeliveryDate) return false;
         const sUnit = (s.unidade || '').toUpperCase().trim();
@@ -206,54 +265,64 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
       });
 
       if (existing) {
-        scheduleIdToAssign = existing.id;
-      } else {
-        // Auto-create a dedicated master schedule for this day and unit
-        const createdSch = addSchedule({
-          nome: `Cronograma - ${selectedOrder.unidade} (${dayNumber}/${monthNumber === 9 ? '09' : '10'})`,
-          competencia: `${monthNumber === 9 ? 'SET' : 'OUT'}/26`,
-          unidade: selectedOrder.unidade,
-          unidades: [selectedOrder.unidade],
-          programa: selectedOrder.programa || 'Hospitalar',
-          tipo_pedido: selectedOrder.tipo || 'Mensal',
-          data_limite_solicitacao: dataSolicitacao || targetDeliveryDate,
-          data_limite_aprovacao: dataAprovacao || targetDeliveryDate,
-          data_separacao: dataInicioSeparacao || targetDeliveryDate,
-          data_expedicao: dataExpedicao || targetDeliveryDate,
-          data_entrega: targetDeliveryDate,
-          observacao: 'Criado via vinculação rápida no calendário',
-          ativo: true,
-        });
-        scheduleIdToAssign = createdSch.id;
+        unitScheduleMap.set(cacheKey, existing.id);
+        return existing.id;
       }
-    }
 
-    const targetDeliveryDate = dataEntrega || targetDate;
+      // 2. Se não existir, gera automaticamente o cronograma para esta unidade no dia
+      const createdSch = addSchedule({
+        nome: `${sigla || unitName} — ${programName || 'Hospitalar'} ${orderTypeName || 'Mensal'} — ${monthCycle}`,
+        competencia: monthCycle,
+        unidade: unitName,
+        unidades: [unitName],
+        programa: programName || 'Hospitalar',
+        tipo_pedido: orderTypeName || 'Mensal',
+        data_limite_solicitacao: dataSolicitacao || targetDeliveryDate,
+        data_limite_aprovacao: dataAprovacao || targetDeliveryDate,
+        data_separacao: dataInicioSeparacao || targetDeliveryDate,
+        data_expedicao: dataExpedicao || targetDeliveryDate,
+        data_entrega: targetDeliveryDate,
+        observacao: 'Vinculado em lote pelo calendário',
+        ativo: true,
+      });
 
-    const updates: Partial<Order> = {
-      cronograma_id: scheduleIdToAssign,
-      cronograma_vinculo: 'MANUAL',
-      data_prevista_entrega: targetDeliveryDate,
-      data_solicitacao: dataSolicitacao || undefined,
-      data_aprovacao: dataAprovacao || undefined,
-      data_inicio_separacao: dataInicioSeparacao || undefined,
-      data_expedicao: dataExpedicao || undefined,
-      validada_em: dataAprovacao ? `${dataAprovacao} 10:00` : selectedOrder.validada_em,
-      separado_em: dataInicioSeparacao ? `${dataInicioSeparacao} 14:00` : selectedOrder.separado_em,
-      expedido_em: dataExpedicao ? `${dataExpedicao} 16:00` : selectedOrder.expedido_em,
+      unitScheduleMap.set(cacheKey, createdSch.id);
+      return createdSch.id;
     };
 
-    updateOrder(
-      selectedOrderId,
-      updates,
+    // Atualização em lote com uma única notificação
+    updateOrders(
+      selectedOrderIds,
+      (ord) => {
+        let scheduleIdToAssign: string | null = null;
+
+        if (selectedScheduleId === 'AUTO_BY_UNIT' || selectedScheduleId === 'AUTO_CREATE') {
+          scheduleIdToAssign = getOrCreateScheduleForUnit(ord.unidade, ord.programa, ord.tipo);
+        } else if (selectedScheduleId !== 'NONE') {
+          scheduleIdToAssign = selectedScheduleId;
+        }
+
+        return {
+          cronograma_id: scheduleIdToAssign,
+          cronograma_vinculo: 'MANUAL',
+          data_prevista_entrega: targetDeliveryDate,
+          data_solicitacao: dataSolicitacao || ord.data_solicitacao || undefined,
+          data_aprovacao: dataAprovacao || ord.data_aprovacao || undefined,
+          data_inicio_separacao: dataInicioSeparacao || ord.data_inicio_separacao || undefined,
+          data_expedicao: dataExpedicao || ord.data_expedicao || undefined,
+          validada_em: dataAprovacao ? `${dataAprovacao} 10:00` : ord.validada_em,
+          separado_em: dataInicioSeparacao ? `${dataInicioSeparacao} 14:00` : ord.separado_em,
+          expedido_em: dataExpedicao ? `${dataExpedicao} 16:00` : ord.expedido_em,
+        };
+      },
       currentUser,
-      `Vinculado ao dia ${dayNumber}/${monthNumber === 9 ? '09' : '10'} no calendário com cronograma ativo`
+      `Vinculação em lote de ${selectedOrderIds.length} pedido(s) ao dia ${dayNumber}/${monthStr}/2026 no calendário`
     );
 
     showToast(
       'success',
-      `${selectedOrder.codigo} vinculado com sucesso!`,
-      `Agendado para o dia ${dayNumber}/${monthNumber === 9 ? '09' : '10'}/2026 com cronograma e datas atualizados.`
+      `${selectedOrderIds.length} ${selectedOrderIds.length === 1 ? 'pedido vinculado' : 'pedidos vinculados'} com sucesso!`,
+      `Agendados para o dia ${dayNumber}/${monthStr}/2026 com cronograma e datas atualizados em uma única ação.`
     );
 
     onClose();
@@ -271,14 +340,19 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-slate-900">
-                  Vincular Pedido ao Dia {dayNumber} de {monthNumber === 9 ? 'Setembro' : 'Outubro'}
+                  Vincular Pedidos ao Dia {dayNumber} de {monthNumber === 9 ? 'Setembro' : 'Outubro'}
                 </h3>
                 <span className="font-mono text-[11px] font-bold text-blue-800 bg-blue-100/70 px-2 py-0.5 rounded-full border border-blue-200">
                   {targetDate}
                 </span>
+                {selectedOrderIds.length > 0 && (
+                  <span className="font-mono text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-300 animate-in fade-in">
+                    {selectedOrderIds.length} selecionado(s)
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 font-medium mt-0.5">
-                Consulte e vincule qualquer pedido de toda a base da SESAU para entrega ou acompanhamento operacional
+                Selecione um ou múltiplos pedidos para agendar e vincular ao cronograma de uma só vez
               </p>
             </div>
           </div>
@@ -386,19 +460,55 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
             </div>
           </div>
 
-          {/* Subheader Toolbar: Checkbox + Counters + Clear filters */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-[11px] text-slate-600">
-            <label className="flex items-center gap-2 cursor-pointer font-medium select-none">
-              <input
-                type="checkbox"
-                checked={onlyUnlinked}
-                onChange={(e) => setOnlyUnlinked(e.target.checked)}
-                className="rounded border-slate-300 text-blue-600 focus:ring-0 w-4 h-4 cursor-pointer"
-              />
-              <span>Mostrar apenas pedidos sem cronograma vinculado</span>
-            </label>
+          {/* Subheader Toolbar: Checkbox + Batch Action Buttons + Counters */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1 text-xs">
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="flex items-center gap-2 cursor-pointer font-medium select-none text-[11px] text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={onlyUnlinked}
+                  onChange={(e) => setOnlyUnlinked(e.target.checked)}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-0 w-4 h-4 cursor-pointer"
+                />
+                <span>Apenas sem cronograma</span>
+              </label>
 
-            <div className="flex items-center gap-2.5 shrink-0">
+              {/* Botões de Seleção em Lote */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={isAllCurrentPageSelected ? deselectCurrentPage : selectAllCurrentPage}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] border border-slate-200 cursor-pointer flex items-center gap-1 shadow-2xs"
+                  title="Marcar/desmarcar todos os pedidos visíveis nesta página"
+                >
+                  {isAllCurrentPageSelected ? <CheckSquare className="w-3 h-3 text-blue-600" /> : <Square className="w-3 h-3 text-slate-400" />}
+                  <span>{isAllCurrentPageSelected ? 'Desmarcar Página' : 'Marcar Página'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={selectAllFiltered}
+                  className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-800 font-bold text-[11px] border border-blue-200 cursor-pointer flex items-center gap-1 shadow-2xs"
+                  title="Selecionar todos os pedidos filtrados"
+                >
+                  <ListChecks className="w-3 h-3 text-blue-600" />
+                  <span>Selecionar Todos ({totalCount})</span>
+                </button>
+
+                {selectedOrderIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearSelection}
+                    className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] border border-rose-200 cursor-pointer flex items-center gap-1 shadow-2xs"
+                    title="Desmarcar todos os pedidos selecionados"
+                  >
+                    <span>Limpar ({selectedOrderIds.length})</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto">
               {hasActiveFilters && (
                 <button
                   onClick={handleClearFilters}
@@ -409,68 +519,35 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                 </button>
               )}
 
-              <span className="font-mono text-[11px] text-slate-600 font-bold bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
-                {totalCount} {totalCount === 1 ? 'pedido encontrado' : 'pedidos encontrados'}
+              <span className="font-mono text-[11px] text-slate-600 font-bold bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+                {totalCount} encontrado(s)
               </span>
             </div>
           </div>
 
-          {/* List of Orders with full collection view */}
-          <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 max-h-64 sm:max-h-72 overflow-y-auto bg-white shadow-2xs">
+          {/* List of Orders with full multi-selection view */}
+          <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 max-h-60 sm:max-h-64 overflow-y-auto bg-white shadow-2xs">
             {paginatedOrders.length > 0 ? (
               paginatedOrders.map((order, idx) => {
-                const isSelected = order.id === selectedOrderId;
+                const isSelected = selectedOrderIds.includes(order.id);
                 const isAlreadyLinked = Boolean(order.cronograma_id);
 
                 return (
                   <div
                     key={`${order.id}-${idx}`}
-                    onClick={() => {
-                      setSelectedOrderId(order.id);
-                      setDataSolicitacao(extractDateOnly(order.data_solicitacao || order.criado_em));
-                      setDataAprovacao(extractDateOnly(order.data_aprovacao || order.validada_em));
-                      setDataInicioSeparacao(extractDateOnly(order.data_inicio_separacao || order.separado_em));
-                      setDataExpedicao(extractDateOnly(order.data_expedicao || order.expedido_em));
-                      setDataEntrega(targetDate || extractDateOnly(order.data_prevista_entrega));
-
-                      // Try to match available schedule for this order's unit
-                      const ordUnit = (order.unidade || '').toUpperCase().trim();
-                      const canonical = getCanonicalUnit(order.unidade);
-                      const sigla = (canonical.sigla || '').toUpperCase().trim();
-                      const nome = (canonical.nome || '').toUpperCase().trim();
-
-                      const matchingSch = availableSchedules.find(s => {
-                        const sUnit = (s.unidade || '').toUpperCase().trim();
-                        return sUnit === ordUnit || sUnit === sigla || sUnit === nome ||
-                               sUnit.includes(sigla) || ordUnit.includes(sUnit) ||
-                               (s.unidades && s.unidades.some(u => {
-                                 const uUp = u.toUpperCase().trim();
-                                 return uUp === sigla || uUp === ordUnit || uUp === nome;
-                               }));
-                      });
-
-                      if (matchingSch) {
-                        setSelectedScheduleId(matchingSch.id);
-                        if (matchingSch.data_limite_solicitacao && !dataSolicitacao) setDataSolicitacao(matchingSch.data_limite_solicitacao);
-                        if (matchingSch.data_limite_aprovacao && !dataAprovacao) setDataAprovacao(matchingSch.data_limite_aprovacao);
-                        if (matchingSch.data_separacao && !dataInicioSeparacao) setDataInicioSeparacao(matchingSch.data_separacao);
-                        if (matchingSch.data_expedicao && !dataExpedicao) setDataExpedicao(matchingSch.data_expedicao);
-                        if (matchingSch.data_entrega) setDataEntrega(matchingSch.data_entrega);
-                      } else {
-                        setSelectedScheduleId('AUTO_CREATE');
-                      }
-                    }}
-                    className={`p-3 flex items-center justify-between gap-3 text-xs cursor-pointer transition-all ${
+                    onClick={() => toggleOrderSelection(order.id)}
+                    className={`p-3 flex items-center justify-between gap-3 text-xs cursor-pointer transition-all select-none ${
                       isSelected
                         ? 'bg-blue-50/90 border-l-4 border-l-blue-600'
                         : 'hover:bg-slate-50'
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
-                        isSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white'
+                      {/* Custom Checkbox */}
+                      <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
+                        isSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white hover:border-blue-400'
                       }`}>
-                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                        {isSelected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
                       </div>
 
                       <div className="min-w-0">
@@ -577,20 +654,48 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
             </div>
           )}
 
-          {/* Schedule Association & Phase Dates for the selected order */}
-          {selectedOrder && (
-            <div className="p-4 bg-slate-50/90 rounded-2xl border border-slate-200/90 space-y-3 text-xs animate-in fade-in">
-              <div className="flex items-center justify-between">
+          {/* Schedule Association & Phase Dates for the selected orders */}
+          {selectedOrderIds.length > 0 && (
+            <div className="p-4 bg-blue-50/70 rounded-2xl border border-blue-200/90 space-y-3 text-xs animate-in fade-in">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="font-bold text-slate-900 block text-xs">
-                  Configuração de Vínculo: <span className="font-mono text-blue-700">{selectedOrder.codigo}</span> ({selectedOrder.unidade})
+                  Configuração de Vínculo em Lote ({selectedOrderIds.length} {selectedOrderIds.length === 1 ? 'pedido selecionado' : 'pedidos selecionados'}):
                 </span>
-                <span className="font-mono text-[11px] font-bold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">
-                  {selectedOrder.quantidade_itens} itens · {selectedOrder.tipo}
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {selectedUnitsList.map(u => (
+                    <span key={u} className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-900 font-bold text-[10px] border border-blue-300">
+                      {u}
+                    </span>
+                  ))}
+                  <span className="font-mono text-[11px] font-bold text-slate-700 bg-white px-2 py-0.5 rounded-md border border-slate-200">
+                    Total: {selectedOrdersList.reduce((acc, o) => acc + (o.quantidade_itens || 0), 0)} itens
+                  </span>
+                </div>
+              </div>
+
+              {/* Badges preview dos pedidos selecionados */}
+              <div className="flex items-center gap-1.5 flex-wrap max-h-20 overflow-y-auto p-1.5 bg-white/80 rounded-xl border border-blue-200/60">
+                {selectedOrdersList.map(o => (
+                  <span
+                    key={o.id}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 font-mono text-[11px] font-semibold"
+                  >
+                    <span>{o.codigo}</span>
+                    <span className="text-slate-400 font-normal">({o.unidade})</span>
+                    <button
+                      type="button"
+                      onClick={() => toggleOrderSelection(o.id)}
+                      className="text-slate-400 hover:text-rose-600 font-bold ml-0.5 cursor-pointer"
+                      title="Remover da seleção"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
               </div>
 
               <div>
-                <label className="text-[10px] font-bold text-slate-500 block mb-1">
+                <label className="text-[10px] font-bold text-slate-700 block mb-1">
                   Vincular ao Cronograma da Unidade:
                 </label>
                 <select
@@ -598,7 +703,7 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                   onChange={(e) => {
                     const newSchId = e.target.value;
                     setSelectedScheduleId(newSchId);
-                    if (newSchId !== 'NONE' && newSchId !== 'AUTO_CREATE') {
+                    if (newSchId !== 'NONE' && newSchId !== 'AUTO_CREATE' && newSchId !== 'AUTO_BY_UNIT') {
                       const found = availableSchedules.find(s => s.id === newSchId);
                       if (found) {
                         if (found.data_limite_solicitacao) setDataSolicitacao(found.data_limite_solicitacao);
@@ -609,9 +714,10 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                       }
                     }
                   }}
-                  className="w-full text-xs bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 >
-                  <option value="AUTO_CREATE">✨ Gerar e vincular ao cronograma do dia {dayNumber}/{monthNumber === 9 ? '09' : '10'}</option>
+                  <option value="AUTO_BY_UNIT">✨ Vincular automaticamente por Hospital / Unidade de cada pedido no dia {dayNumber}/{monthNumber === 9 ? '09' : '10'}</option>
+                  <option value="AUTO_CREATE">✨ Gerar novo cronograma unificado para os pedidos selecionados</option>
                   <option value="NONE">Vincular diretamente ao dia {dayNumber}/{monthNumber === 9 ? '09' : '10'} no Calendário</option>
                   {availableSchedules.map(s => (
                     <option key={s.id} value={s.id}>
@@ -622,69 +728,69 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
               </div>
 
               {/* 5 Operational Phase Dates */}
-              <div className="pt-2.5 border-t border-slate-200/80 space-y-2.5">
+              <div className="pt-2.5 border-t border-blue-200/80 space-y-2.5">
                 <span className="font-bold text-slate-800 block text-xs">
-                  Datas das Etapas Operacionais do Pedido:
+                  Datas das Etapas Operacionais dos Pedidos Selecionados:
                 </span>
 
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                   <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">
+                    <label className="text-[10px] text-slate-600 block mb-0.5 font-medium">
                       1. Solicitação:
                     </label>
                     <input
                       type="date"
                       value={dataSolicitacao}
                       onChange={(e) => setDataSolicitacao(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
+                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">
+                    <label className="text-[10px] text-slate-600 block mb-0.5 font-medium">
                       2. Aprovação:
                     </label>
                     <input
                       type="date"
                       value={dataAprovacao}
                       onChange={(e) => setDataAprovacao(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
+                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">
+                    <label className="text-[10px] text-slate-600 block mb-0.5 font-medium">
                       3. Separação:
                     </label>
                     <input
                       type="date"
                       value={dataInicioSeparacao}
                       onChange={(e) => setDataInicioSeparacao(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
+                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">
+                    <label className="text-[10px] text-slate-600 block mb-0.5 font-medium">
                       4. Expedição:
                     </label>
                     <input
                       type="date"
                       value={dataExpedicao}
                       onChange={(e) => setDataExpedicao(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
+                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] font-bold text-blue-800 block mb-0.5">
+                    <label className="text-[10px] font-bold text-blue-900 block mb-0.5">
                       5. Entrega:
                     </label>
                     <input
                       type="date"
                       value={dataEntrega}
                       onChange={(e) => setDataEntrega(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-blue-50 border border-blue-300 text-blue-950 font-bold rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      className="w-full text-xs font-mono p-1.5 bg-blue-100 border border-blue-400 text-blue-950 font-bold rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     />
                   </div>
                 </div>
@@ -696,14 +802,14 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
         {/* Modal Footer */}
         <div className="p-3.5 sm:p-4 border-t border-slate-100 bg-slate-50/90 flex items-center justify-between gap-3">
           <div className="text-xs text-slate-500 font-medium">
-            {selectedOrder ? (
+            {selectedOrderIds.length > 0 ? (
               <span className="flex items-center gap-1.5 text-blue-900 font-bold">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>Pedido selecionado: {selectedOrder.codigo}</span>
+                <span>{selectedOrderIds.length} {selectedOrderIds.length === 1 ? 'pedido pronto para vincular' : 'pedidos prontos para vincular'}</span>
               </span>
             ) : (
               <span className="italic text-slate-400">
-                Selecione um pedido na lista para habilitar a vinculação
+                Selecione um ou mais pedidos na lista para habilitar a vinculação em lote
               </span>
             )}
           </div>
@@ -718,11 +824,11 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
 
             <button
               onClick={handleLink}
-              disabled={!selectedOrderId}
+              disabled={selectedOrderIds.length === 0}
               className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:pointer-events-none rounded-xl shadow-xs hover:shadow transition-all cursor-pointer active:scale-95"
             >
               <Link2 className="w-3.5 h-3.5" />
-              <span>Confirmar Vínculo</span>
+              <span>Confirmar Vínculo ({selectedOrderIds.length})</span>
             </button>
           </div>
         </div>

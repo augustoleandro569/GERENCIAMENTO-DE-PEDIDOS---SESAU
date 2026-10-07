@@ -47,6 +47,8 @@ interface UnifiedCalendarProps {
   selectedUnitsProp?: string[];
   selectedOrderTypesProp?: string[];
   selectedStagesProp?: string[];
+  selectedScheduleProp?: string;
+  onSelectSchedule?: (scheduleId: string) => void;
   onOpenNewSchedule?: (targetDate: string) => void;
   onOpenScheduleOrders?: (schedule: Schedule, filter?: 'ALL' | 'NO_PRAZO' | 'FORA_DO_PRAZO') => void;
 }
@@ -62,6 +64,8 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
   selectedUnitsProp,
   selectedOrderTypesProp,
   selectedStagesProp,
+  selectedScheduleProp,
+  onSelectSchedule,
   onOpenNewSchedule,
   onOpenScheduleOrders,
 }) => {
@@ -168,6 +172,8 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
     return null;
   };
 
+  const currentScheduleFilter = selectedScheduleProp || 'ALL';
+
   const filteredOrders = useMemo(() => {
     return orders.filter(o => {
       // Pedidos desvinculados sem qualquer cronograma ou data ativa nunca pertencem ao calendário
@@ -184,6 +190,11 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       );
       if (!hasCalendarPresence) return false;
 
+      // Filtro de cronograma sincronizado
+      if (currentScheduleFilter !== 'ALL' && o.cronograma_id !== currentScheduleFilter) {
+        return false;
+      }
+
       // Multi-seleção de Unidades
       if (selectedUnits.length > 0) {
         const uLow = (o.unidade || '').toLowerCase();
@@ -199,10 +210,13 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
 
       return true;
     });
-  }, [orders, selectedUnits, selectedOrderTypes]);
+  }, [orders, selectedUnits, selectedOrderTypes, currentScheduleFilter]);
 
   const filteredSchedules = useMemo(() => {
     let list = schedules;
+    if (currentScheduleFilter !== 'ALL') {
+      list = list.filter(s => s.id === currentScheduleFilter);
+    }
     if (selectedUnits.length > 0) {
       list = list.filter(s => {
         const schUnits = s.unidades && s.unidades.length > 0
@@ -217,7 +231,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       list = list.filter(s => selectedOrderTypes.includes(s.tipo_pedido));
     }
     return list;
-  }, [schedules, selectedUnits, selectedOrderTypes]);
+  }, [schedules, selectedUnits, selectedOrderTypes, currentScheduleFilter]);
 
   // Unified Day Mapping Structure (Exclusively real order operations):
   interface DayMapping {
@@ -405,8 +419,38 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
           </button>
         </div>
 
-        {/* Multi-Select Filters */}
+        {/* Multi-Select Filters & Schedule Selector */}
         <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+          {/* Sincronização: Filtro de Cronograma */}
+          {onSelectSchedule && (
+            <div className="flex items-center gap-1.5 bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-2.5 py-1.5 shadow-2xs flex-1 sm:flex-initial sm:w-52 transition-all">
+              <CalendarDays className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <select
+                value={currentScheduleFilter}
+                onChange={(e) => onSelectSchedule(e.target.value)}
+                className="text-xs font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer w-full truncate"
+                title="Filtrar calendário por cronograma específico (sincronizado com Por Progresso e Tabela)"
+              >
+                <option value="ALL">🌐 Todos os Cronogramas ({schedules.length})</option>
+                {schedules.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.nome} ({s.competencia})
+                  </option>
+                ))}
+              </select>
+              {currentScheduleFilter !== 'ALL' && (
+                <button
+                  type="button"
+                  onClick={() => onSelectSchedule('ALL')}
+                  className="text-[10px] text-blue-700 hover:text-rose-600 font-bold px-1 cursor-pointer"
+                  title="Limpar filtro de cronograma"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Multi-Select Etapas */}
           <MultiSelect
             options={[
@@ -419,7 +463,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
             selected={selectedStages}
             onChange={(next) => setSelectedStages(next)}
             placeholder="Todas as Etapas"
-            className="flex-1 sm:flex-initial sm:w-48"
+            className="flex-1 sm:flex-initial sm:w-40"
           />
 
           {/* Multi-Select Tipos de Pedido */}
@@ -428,7 +472,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
             selected={selectedOrderTypes}
             onChange={(next) => setSelectedOrderTypes(next)}
             placeholder="Todos os Tipos"
-            className="flex-1 sm:flex-initial sm:w-40"
+            className="flex-1 sm:flex-initial sm:w-36"
           />
 
           {/* Multi-Select Unidades Hospitalares */}
@@ -437,26 +481,53 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
             selected={selectedUnits}
             onChange={(next) => setSelectedUnits(next)}
             placeholder="Todas as Unidades"
-            className="flex-1 sm:flex-initial sm:w-48"
+            className="flex-1 sm:flex-initial sm:w-40"
             showSearch={true}
           />
 
-          {(selectedStages.length > 0 || selectedOrderTypes.length > 0 || selectedUnits.length > 0) && (
+          {(selectedStages.length > 0 || selectedOrderTypes.length > 0 || selectedUnits.length > 0 || currentScheduleFilter !== 'ALL') && (
             <button
               onClick={() => {
                 setSelectedStages([]);
                 setSelectedOrderTypes([]);
                 setSelectedUnits([]);
+                if (onSelectSchedule) onSelectSchedule('ALL');
               }}
               className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-2xs whitespace-nowrap shrink-0"
-              title="Limpar filtros ativos do calendário"
+              title="Limpar todos os filtros do calendário"
             >
               <RotateCcw className="w-3 h-3" />
-              <span>Limpar ({selectedStages.length + selectedOrderTypes.length + selectedUnits.length})</span>
+              <span>Limpar ({selectedStages.length + selectedOrderTypes.length + selectedUnits.length + (currentScheduleFilter !== 'ALL' ? 1 : 0)})</span>
             </button>
           )}
         </div>
       </div>
+
+      {/* Sincronização Banner: quando um cronograma específico está filtrado */}
+      {currentScheduleFilter !== 'ALL' && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 text-blue-900 px-4 py-3 rounded-2xl flex items-center justify-between text-xs shadow-2xs">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+            <CalendarDays className="w-4 h-4 text-blue-700 shrink-0" />
+            <span>
+              Filtrado pelo cronograma: <strong>{schedules.find(s => s.id === currentScheduleFilter)?.nome || currentScheduleFilter}</strong>
+            </span>
+            <span className="font-mono text-[11px] bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-bold">
+              {filteredOrders.length} pedido(s) no calendário
+            </span>
+            <span className="text-[11px] text-slate-500 hidden md:inline">
+              (Filtro sincronizado com as abas <strong>Por Progresso</strong> e <strong>Tabela</strong>)
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onSelectSchedule?.('ALL')}
+            className="text-xs font-bold text-blue-700 hover:text-blue-950 underline cursor-pointer ml-3 whitespace-nowrap"
+          >
+            ✕ Ver Todos os Cronogramas
+          </button>
+        </div>
+      )}
 
       {/* Main Grid: Calendar on Left, Drawer on Right */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -538,13 +609,27 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                         </span>
                       )}
 
+                      {currentUser.role !== 'VIEWER' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedDay(day);
+                            setIsLinkModalOpen(true);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-blue-700 hover:bg-blue-50 rounded-md transition-all cursor-pointer"
+                          title={`Vincular pedidos ao dia ${day}`}
+                        >
+                          <Link2 className="w-3 h-3" />
+                        </button>
+                      )}
+
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedDay(day);
                           setIsDayOrdersModalOpen(true);
                         }}
-                        className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-blue-700 hover:bg-blue-50 rounded-md transition-all"
+                        className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-blue-700 hover:bg-blue-50 rounded-md transition-all cursor-pointer"
                         title="Visualização completa dos pedidos"
                       >
                         <Maximize2 className="w-3 h-3" />
@@ -660,9 +745,10 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                   onClick={() => setIsLinkModalOpen(true)}
                   disabled={currentUser.role === 'VIEWER'}
                   className="w-full flex items-center justify-center gap-2 px-3.5 py-2 rounded-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold shadow-xs hover:shadow-md active:scale-98 transition-all cursor-pointer"
+                  title="Vincular um ou múltiplos pedidos a este dia do calendário"
                 >
                   <Link2 className="w-3.5 h-3.5" />
-                  <span>+ Vincular Pedido a este Dia</span>
+                  <span>+ Vincular Pedidos a este Dia</span>
                 </button>
 
                 {/* Button to Unlink Orders of this day - Only shown when there are real orders */}
@@ -927,39 +1013,43 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       </div>
 
       {/* Link Order Modal */}
-      <LinkOrderModal
-        isOpen={isLinkModalOpen}
-        onClose={() => {
-          setIsLinkModalOpen(false);
-          if (returnToDayOrdersModal) {
-            setIsDayOrdersModalOpen(true);
-            setReturnToDayOrdersModal(false);
-          }
-        }}
-        targetDate={`2026-${monthStr}-${String(selectedDay || todayRef.day).padStart(2, '0')}`}
-        dayNumber={selectedDay || todayRef.day}
-        monthNumber={currentMonth}
-        availableSchedules={filteredSchedules}
-      />
+      {isLinkModalOpen && (
+        <LinkOrderModal
+          isOpen={isLinkModalOpen}
+          onClose={() => {
+            setIsLinkModalOpen(false);
+            if (returnToDayOrdersModal) {
+              setIsDayOrdersModalOpen(true);
+              setReturnToDayOrdersModal(false);
+            }
+          }}
+          targetDate={`2026-${monthStr}-${String(selectedDay || todayRef.day).padStart(2, '0')}`}
+          dayNumber={selectedDay || todayRef.day}
+          monthNumber={currentMonth}
+          availableSchedules={filteredSchedules}
+        />
+      )}
 
       {/* Day Full Orders View Modal */}
-      <DayOrdersModal
-        isOpen={isDayOrdersModalOpen}
-        onClose={() => setIsDayOrdersModalOpen(false)}
-        dayNumber={selectedDay || todayRef.day}
-        monthNumber={currentMonth}
-        onNavigateDay={(newDay) => setSelectedDay(newDay)}
-        onSelectOrder={onSelectOrder}
-        onOpenLinkModal={() => {
-          setReturnToDayOrdersModal(true);
-          setIsLinkModalOpen(true);
-        }}
-        onOpenNewSchedule={onOpenNewSchedule}
-        externalFilterUnits={selectedUnits}
-        externalFilterOrderTypes={selectedOrderTypes}
-        externalStageFilters={selectedStages}
-        onOpenScheduleOrders={onOpenScheduleOrders}
-      />
+      {isDayOrdersModalOpen && (
+        <DayOrdersModal
+          isOpen={isDayOrdersModalOpen}
+          onClose={() => setIsDayOrdersModalOpen(false)}
+          dayNumber={selectedDay || todayRef.day}
+          monthNumber={currentMonth}
+          onNavigateDay={(newDay) => setSelectedDay(newDay)}
+          onSelectOrder={onSelectOrder}
+          onOpenLinkModal={() => {
+            setReturnToDayOrdersModal(true);
+            setIsLinkModalOpen(true);
+          }}
+          onOpenNewSchedule={onOpenNewSchedule}
+          externalFilterUnits={selectedUnits}
+          externalFilterOrderTypes={selectedOrderTypes}
+          externalStageFilters={selectedStages}
+          onOpenScheduleOrders={onOpenScheduleOrders}
+        />
+      )}
 
       {/* Confirmation Modal to Unlink All Orders of the Day */}
       {isUnlinkConfirmOpen && selectedDay && (

@@ -32,6 +32,7 @@ import {
   Building2,
   Package,
   Calendar,
+  CalendarDays,
 } from 'lucide-react';
 
 interface OrdersViewProps {
@@ -49,7 +50,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onOpenImport,
   initialFilter,
 }) => {
-  const { orders, schedules, units, programs, orderTypes, currentUser, updateOperationalStatus, settings } = useStore();
+  const { orders, schedules, units, programs, orderTypes, currentUser, updateOperationalStatus, updateOrders, settings } = useStore();
 
   // View mode
   const [viewMode, setViewMode] = useState<'tabela' | 'kanban'>('tabela');
@@ -61,6 +62,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const [selectedTypes, setSelectedTypes] = useState<string[]>(initialFilter?.tipo ? [initialFilter.tipo] : []);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(initialFilter?.status ? [initialFilter.status] : []);
   const [selectedQuickFilters, setSelectedQuickFilters] = useState<string[]>([]);
+  const [selectedScheduleFilter, setSelectedScheduleFilter] = useState<string>('ALL');
 
   // Synchronize when initialFilter changes from parent
   React.useEffect(() => {
@@ -219,9 +221,20 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         if (!matchesStatus) return false;
       }
 
+      // Filter by Schedule / Vínculo
+      if (selectedScheduleFilter !== 'ALL') {
+        if (selectedScheduleFilter === 'SEM_CRONOGRAMA') {
+          if (order.cronograma_id) return false;
+        } else if (selectedScheduleFilter === 'COM_CRONOGRAMA') {
+          if (!order.cronograma_id) return false;
+        } else {
+          if (order.cronograma_id !== selectedScheduleFilter) return false;
+        }
+      }
+
       return true;
     });
-  }, [orders, selectedQuickFilters, searchTerm, selectedUnits, selectedPrograms, selectedTypes, selectedStatuses, schedulesMap, settings.horas_alerta_atencao]);
+  }, [orders, selectedQuickFilters, searchTerm, selectedUnits, selectedPrograms, selectedTypes, selectedStatuses, selectedScheduleFilter, schedulesMap, settings.horas_alerta_atencao]);
 
   // Sorted orders
   const sortedOrders = useMemo(() => {
@@ -294,6 +307,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     setSelectedTypes([]);
     setSelectedStatuses([]);
     setSelectedQuickFilters([]);
+    setSelectedScheduleFilter('ALL');
     setCurrentPage(1);
   };
 
@@ -547,83 +561,136 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           </div>
         </div>
 
-        {/* Tier 2: Search Input & Multi-Select Dropdowns - relative z-30 and overflow-visible */}
-        <div className="p-3.5 bg-slate-50/50 flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-3 relative z-30 overflow-visible">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-              placeholder="Buscar por código (ex: SOL-2026-03074), unidade, solicitante ou CPF..."
-              className="w-full pl-9 pr-8 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all text-slate-900 placeholder:text-slate-400 font-medium shadow-2xs"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] hover:bg-slate-300 transition-colors cursor-pointer"
-              >
-                ✕
-              </button>
-            )}
+        {/* Tier 2: Search Input & Multi-Select Dropdowns - Balanced Grid Distribution */}
+        <div className="p-3.5 bg-slate-50/70 space-y-3 relative z-30 overflow-visible border-b border-slate-200/60">
+          {/* Row 1: Search, Cronograma Scope Selector & Global Actions */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
+            {/* Search Input */}
+            <div className="col-span-1 md:col-span-6 lg:col-span-6 relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                placeholder="Buscar por código (ex: SOL-2026-03074), unidade, solicitante ou CPF..."
+                className="w-full pl-9 pr-8 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all text-slate-900 placeholder:text-slate-400 font-medium shadow-2xs"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] hover:bg-slate-300 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Cronograma Scope Filter */}
+            <div className="col-span-1 md:col-span-4 lg:col-span-4">
+              <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-2.5 py-1.5 shadow-2xs">
+                <CalendarDays className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <select
+                  value={selectedScheduleFilter}
+                  onChange={(e) => { setSelectedScheduleFilter(e.target.value); setCurrentPage(1); }}
+                  className="w-full text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer truncate"
+                  title="Filtrar por cronograma ou pedidos pendentes de vínculo"
+                >
+                  <option value="ALL">🌐 Todos os Cronogramas</option>
+                  <option value="SEM_CRONOGRAMA">⚠️ Pedidos Sem Cronograma (Pendentes)</option>
+                  <option value="COM_CRONOGRAMA">🔗 Pedidos Vinculados a Cronogramas</option>
+                  {schedules.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.nome} ({s.competencia} · Entrega {formatShortDate(s.data_entrega)})
+                    </option>
+                  ))}
+                </select>
+                {selectedScheduleFilter !== 'ALL' && (
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedScheduleFilter('ALL'); setCurrentPage(1); }}
+                    className="text-[10px] text-blue-700 hover:text-rose-600 font-bold px-1"
+                    title="Limpar filtro de cronograma"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Quick Actions & Filter Counters */}
+            <div className="col-span-1 md:col-span-2 lg:col-span-2 flex items-center justify-between md:justify-end gap-2">
+              {(selectedUnits.length > 0 || selectedPrograms.length > 0 || selectedTypes.length > 0 || selectedStatuses.length > 0 || selectedQuickFilters.length > 0 || selectedScheduleFilter !== 'ALL' || searchTerm) && (
+                <button
+                  type="button"
+                  onClick={handleClearFilters}
+                  className="text-xs text-rose-700 hover:text-rose-900 font-bold px-2.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-2xs whitespace-nowrap"
+                  title="Limpar todos os filtros ativos"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Limpar</span>
+                </button>
+              )}
+              <span className="font-mono text-xs font-bold bg-blue-50 text-blue-700 px-2.5 py-2 rounded-xl border border-blue-200 shadow-2xs whitespace-nowrap text-center">
+                {filteredOrders.length} de {orders.length}
+              </span>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5 w-full xl:w-auto relative z-30">
+          {/* Row 2: 4 Evenly Distributed MultiSelect Dropdowns (Each 25% on desktop, 50% on mobile) */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 relative z-30">
             {/* Multi-Select Unidades */}
-            <MultiSelect
-              options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
-              selected={selectedUnits}
-              onChange={(next) => { setSelectedUnits(next); setCurrentPage(1); }}
-              placeholder="Todas as Unidades"
-              className="flex-1 sm:flex-initial sm:w-48"
-              showSearch={true}
-              align="left"
-            />
+            <div className="col-span-1">
+              <MultiSelect
+                options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
+                selected={selectedUnits}
+                onChange={(next) => { setSelectedUnits(next); setCurrentPage(1); }}
+                placeholder="Todas as Unidades"
+                className="w-full"
+                showSearch={true}
+                align="left"
+              />
+            </div>
 
             {/* Multi-Select Programas */}
-            <MultiSelect
-              options={programs.map(p => ({ id: p.nome, label: p.nome }))}
-              selected={selectedPrograms}
-              onChange={(next) => { setSelectedPrograms(next); setCurrentPage(1); }}
-              placeholder="Todos os Programas"
-              className="flex-1 sm:flex-initial sm:w-44"
-              align="left"
-            />
+            <div className="col-span-1">
+              <MultiSelect
+                options={programs.map(p => ({ id: p.nome, label: p.nome }))}
+                selected={selectedPrograms}
+                onChange={(next) => { setSelectedPrograms(next); setCurrentPage(1); }}
+                placeholder="Todos os Programas"
+                className="w-full"
+                align="left"
+              />
+            </div>
 
             {/* Multi-Select Tipos */}
-            <MultiSelect
-              options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
-              selected={selectedTypes}
-              onChange={(next) => { setSelectedTypes(next); setCurrentPage(1); }}
-              placeholder="Todos os Tipos"
-              className="flex-1 sm:flex-initial sm:w-40"
-              align="right"
-            />
+            <div className="col-span-1">
+              <MultiSelect
+                options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
+                selected={selectedTypes}
+                onChange={(next) => { setSelectedTypes(next); setCurrentPage(1); }}
+                placeholder="Todos os Tipos"
+                className="w-full"
+                align="right"
+              />
+            </div>
 
             {/* Multi-Select Status Operacional: All 14 states */}
-            <MultiSelect
-              options={ALL_OPERATIONAL_STATUSES.map(s => ({
-                id: s.status,
-                label: s.label,
-                count: statusCounts[s.status] || 0,
-              }))}
-              selected={selectedStatuses}
-              onChange={(next) => { setSelectedStatuses(next); setCurrentPage(1); }}
-              placeholder="Todos os Status"
-              className="flex-1 sm:flex-initial sm:w-48"
-              align="right"
-            />
-
-            {(selectedUnits.length > 0 || selectedPrograms.length > 0 || selectedTypes.length > 0 || selectedStatuses.length > 0 || selectedQuickFilters.length > 0 || searchTerm) && (
-              <button
-                onClick={handleClearFilters}
-                className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs whitespace-nowrap shrink-0"
-                title="Limpar todos os filtros ativos"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Limpar Filtros</span>
-              </button>
-            )}
+            <div className="col-span-1">
+              <MultiSelect
+                options={ALL_OPERATIONAL_STATUSES.map(s => ({
+                  id: s.status,
+                  label: s.label,
+                  count: statusCounts[s.status] || 0,
+                }))}
+                selected={selectedStatuses}
+                onChange={(next) => { setSelectedStatuses(next); setCurrentPage(1); }}
+                placeholder="Todos os Status"
+                className="w-full"
+                align="right"
+              />
+            </div>
           </div>
         </div>
 
@@ -913,7 +980,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                   })
                 ) : (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-xs text-slate-400">
+                    <td colSpan={9} className="py-12 text-center text-xs text-slate-400">
                       Nenhum pedido encontrado para os filtros selecionados.
                     </td>
                   </tr>
@@ -1224,6 +1291,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           </div>
         </div>
       )}
+
     </div>
   );
 };

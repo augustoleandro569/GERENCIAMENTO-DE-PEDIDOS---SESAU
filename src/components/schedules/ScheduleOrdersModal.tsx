@@ -5,6 +5,7 @@ import { calculateDeadlineSituation, formatDate, formatShortDate } from '../../u
 import { DeadlineBadge, TypeTag, PriorityBadge, InlineStatusSelect } from '../common/StatusBadge';
 import { exportOrdersToSpreadsheet } from '../../utils/spreadsheet';
 import { showToast } from '../common/Toast';
+import { BatchLinkOrdersModal } from './BatchLinkOrdersModal';
 import { 
   X, 
   Calendar, 
@@ -19,7 +20,8 @@ import {
   Zap,
   TrendingUp,
   Filter,
-  Check
+  Check,
+  Link2
 } from 'lucide-react';
 
 interface ScheduleOrdersModalProps {
@@ -43,6 +45,7 @@ export const ScheduleOrdersModal: React.FC<ScheduleOrdersModalProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [editingDateOrderId, setEditingDateOrderId] = useState<string | null>(null);
   const [tempDateValue, setTempDateValue] = useState<string>('');
+  const [isBatchLinkOpen, setIsBatchLinkOpen] = useState(false);
 
   useEffect(() => {
     if (initialFilter) {
@@ -201,6 +204,17 @@ export const ScheduleOrdersModal: React.FC<ScheduleOrdersModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {currentUser.role !== 'VIEWER' && (
+              <button
+                onClick={() => setIsBatchLinkOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 rounded-full transition-all cursor-pointer shadow-xs whitespace-nowrap"
+                title="Vincular mais pedidos a este cronograma em uma única ação"
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                <span>+ Vincular Pedidos</span>
+              </button>
+            )}
+
             <button
               onClick={handleExport}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-full transition-all cursor-pointer shadow-2xs"
@@ -565,12 +579,23 @@ export const ScheduleOrdersModal: React.FC<ScheduleOrdersModalProps> = ({
               </div>
             </div>
           ) : (
-            <div className="p-12 text-center text-xs text-slate-400 italic bg-slate-50 rounded-2xl border border-slate-200/60 space-y-1">
+            <div className="p-12 text-center text-xs text-slate-400 italic bg-slate-50 rounded-2xl border border-slate-200/60 space-y-3">
               <p>Nenhum pedido encontrado com o filtro selecionado ({activeFilter}).</p>
               {counts.total === 0 && (
-                <p className="text-slate-500 font-normal">
-                  Ainda não há pedidos vinculados a este cronograma. Os pedidos serão associados automaticamente com base nas unidades, programa e modalidade.
-                </p>
+                <div className="space-y-3 not-italic">
+                  <p className="text-slate-500 font-normal">
+                    Ainda não há pedidos vinculados a este cronograma.
+                  </p>
+                  {currentUser.role !== 'VIEWER' && (
+                    <button
+                      onClick={() => setIsBatchLinkOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full transition-all cursor-pointer shadow-2xs"
+                    >
+                      <Link2 className="w-3.5 h-3.5" />
+                      <span>Vincular Pedidos a este Cronograma Agora</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -590,6 +615,13 @@ export const ScheduleOrdersModal: React.FC<ScheduleOrdersModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Batch Link Orders Modal */}
+      <BatchLinkOrdersModal
+        isOpen={isBatchLinkOpen}
+        onClose={() => setIsBatchLinkOpen(false)}
+        preselectedScheduleId={schedule.id}
+      />
     </div>
   );
 };

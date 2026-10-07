@@ -32,6 +32,7 @@ export function useStore() {
     // Actions
     addOrder: store.addOrder.bind(store),
     updateOrder: store.updateOrder.bind(store),
+    updateOrders: store.updateOrders.bind(store),
     updateOperationalStatus: store.updateOperationalStatus.bind(store),
     processImport: store.processImport.bind(store),
     recordFailedImport: store.recordFailedImport.bind(store),

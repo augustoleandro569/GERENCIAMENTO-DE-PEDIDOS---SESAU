@@ -6,6 +6,7 @@ import { UnifiedCalendar } from './UnifiedCalendar';
 import { DayOrdersModal } from './DayOrdersModal';
 import { ScheduleOrdersModal } from './ScheduleOrdersModal';
 import { ScheduleReportTab } from './ScheduleReportTab';
+import { BatchLinkOrdersModal } from './BatchLinkOrdersModal';
 import { MultiSelect } from '../common/MultiSelect';
 import { showToast } from '../common/Toast';
 import { 
@@ -34,8 +35,36 @@ import {
   Layers,
   CalendarPlus,
   RotateCcw,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Send,
+  CalendarDays,
+  SlidersHorizontal,
+  Link2
 } from 'lucide-react';
+
+export type ScheduleDateSortField = 'data_entrega' | 'data_expedicao' | 'data_separacao' | 'data_limite_aprovacao' | 'data_limite_solicitacao';
+
+export const DATE_SORT_OPTIONS: { id: ScheduleDateSortField; label: string; shortLabel: string }[] = [
+  { id: 'data_entrega', label: '🚚 5. Entrega no Hospital (Padrão)', shortLabel: 'Entrega' },
+  { id: 'data_expedicao', label: '🚛 4. Expedição / Trânsito', shortLabel: 'Expedição' },
+  { id: 'data_separacao', label: '📦 3. Início da Separação', shortLabel: 'Separação' },
+  { id: 'data_limite_aprovacao', label: '✅ 2. Limite de Aprovação', shortLabel: 'Aprovação' },
+  { id: 'data_limite_solicitacao', label: '📝 1. Limite de Solicitação', shortLabel: 'Solicitação' },
+];
+
+export type ScheduleDateFilterPreset = 'TODOS' | 'HOJE' | 'PROXIMOS_7' | 'PROXIMOS_15' | 'ESTE_MES' | 'PROXIMO_MES';
+
+export const DATE_FILTER_PRESET_OPTIONS: { id: ScheduleDateFilterPreset; label: string }[] = [
+  { id: 'TODOS', label: '🌐 Todas as Datas' },
+  { id: 'HOJE', label: '⚡ Hoje' },
+  { id: 'PROXIMOS_7', label: '📅 Próximos 7 Dias' },
+  { id: 'PROXIMOS_15', label: '📅 Próximos 15 Dias' },
+  { id: 'ESTE_MES', label: '🗓️ Este Mês (OUT/26)' },
+  { id: 'PROXIMO_MES', label: '🗓️ Próximo Mês (NOV/26)' },
+];
 
 interface ScheduleViewProps {
   onSelectOrder?: (order: Order) => void;
@@ -59,6 +88,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
     initialFilter?: 'ALL' | 'NO_PRAZO' | 'ATENCAO' | 'FORA_DO_PRAZO';
   } | null>(null);
 
+  // Batch Link Modal state (Permite vincular múltiplos pedidos em uma única ação)
+  const [batchLinkScheduleId, setBatchLinkScheduleId] = useState<string | null>(null);
+
   // Form State
   const [nome, setNome] = useState('');
   const [competencia, setCompetencia] = useState('OUT/26');
@@ -79,10 +111,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
   // Day Orders Modal for direct date clicks in Progresso/Tabela tabs
   const [dayOrdersModalConfig, setDayOrdersModalConfig] = useState<{ day: number; month: number; type?: string } | null>(null);
 
-  // Multi-filtros para abas de Progresso e Tabela
+  // Multi-filtros sincronizados para abas de Progresso e Tabela
   const [filterUnits, setFilterUnits] = useState<string[]>([]);
   const [filterPrograms, setFilterPrograms] = useState<string[]>([]);
   const [filterTypes, setFilterTypes] = useState<string[]>([]);
+  const [selectedScheduleFilter, setSelectedScheduleFilter] = useState<string>('ALL');
+  const [selectedCompetenciaFilter, setSelectedCompetenciaFilter] = useState<string>('ALL');
+  const [searchScheduleTerm, setSearchScheduleTerm] = useState<string>('');
+  const [dateSortField, setDateSortField] = useState<ScheduleDateSortField>('data_entrega');
+  const [dateSortOrder, setDateSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [dateFilterPreset, setDateFilterPreset] = useState<ScheduleDateFilterPreset>('TODOS');
 
   const handleOpenDayFromDate = (dateStr?: string | null, type?: string) => {
     if (!dateStr) return;
@@ -225,25 +263,86 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
     });
   }, [schedules, orders, settings]);
 
-  // Lista filtrada por multi-seleção de filtros e opções
-  const filteredScheduleProgressList = useMemo(() => {
-    return scheduleProgressList.filter(({ sch }) => {
-      if (filterUnits.length > 0) {
-        const schUnits = sch.unidades && sch.unidades.length > 0
-          ? sch.unidades
-          : sch.unidade.includes(',')
-          ? sch.unidade.split(',').map((s: string) => s.trim())
-          : [sch.unidade];
-        if (!schUnits.some((u: string) => filterUnits.includes(u))) return false;
-      }
-      if (filterPrograms.length > 0 && !filterPrograms.includes(sch.programa)) return false;
-      if (filterTypes.length > 0 && !filterTypes.includes(sch.tipo_pedido)) return false;
-      return true;
+  // Competências disponíveis dinâmicas
+  const availableCompetencias = useMemo(() => {
+    const set = new Set<string>();
+    schedules.forEach(s => {
+      if (s.competencia) set.add(s.competencia.trim());
     });
-  }, [scheduleProgressList, filterUnits, filterPrograms, filterTypes]);
+    return Array.from(set).sort();
+  }, [schedules]);
 
-  const filteredSchedulesList = useMemo(() => {
-    return schedules.filter(sch => {
+  // Função comparadora para organização por data
+  const compareSchedulesByDate = (a: Schedule, b: Schedule, field: ScheduleDateSortField, order: 'asc' | 'desc') => {
+    const parseTime = (dateStr?: string) => {
+      if (!dateStr) return 0;
+      const parsed = parseDateSafe(dateStr);
+      if (parsed) return parsed.getTime();
+      const direct = new Date(dateStr).getTime();
+      return isNaN(direct) ? 0 : direct;
+    };
+
+    const timeA = parseTime(a[field]);
+    const timeB = parseTime(b[field]);
+    if (timeA === timeB) {
+      return a.nome.localeCompare(b.nome);
+    }
+    return order === 'asc' ? timeA - timeB : timeB - timeA;
+  };
+
+  const handleToggleDateSort = (field: ScheduleDateSortField) => {
+    if (dateSortField === field) {
+      setDateSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setDateSortField(field);
+      setDateSortOrder('asc');
+    }
+  };
+
+  // Verificador de período/data para a organização por data
+  const matchesDatePreset = (sch: Schedule): boolean => {
+    if (dateFilterPreset === 'TODOS') return true;
+    const val = sch[dateSortField] || sch.data_entrega;
+    if (!val) return false;
+    const d = parseDateSafe(val);
+    if (!d) return false;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const tTime = d.getTime();
+    const oneDay = 24 * 60 * 60 * 1000;
+
+    if (dateFilterPreset === 'HOJE') {
+      return tTime >= startOfToday && tTime < startOfToday + oneDay;
+    }
+    if (dateFilterPreset === 'PROXIMOS_7') {
+      return tTime >= startOfToday && tTime <= startOfToday + 7 * oneDay;
+    }
+    if (dateFilterPreset === 'PROXIMOS_15') {
+      return tTime >= startOfToday && tTime <= startOfToday + 15 * oneDay;
+    }
+    if (dateFilterPreset === 'ESTE_MES') {
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }
+    if (dateFilterPreset === 'PROXIMO_MES') {
+      const nextMonth = (now.getMonth() + 1) % 12;
+      const nextYear = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
+      return d.getMonth() === nextMonth && d.getFullYear() === nextYear;
+    }
+    return true;
+  };
+
+  // Lista filtrada e organizada por data para a aba "Por Progresso"
+  const filteredScheduleProgressList = useMemo(() => {
+    const list = scheduleProgressList.filter(({ sch }) => {
+      if (selectedScheduleFilter !== 'ALL' && sch.id !== selectedScheduleFilter) return false;
+      if (selectedCompetenciaFilter !== 'ALL' && sch.competencia !== selectedCompetenciaFilter) return false;
+      if (searchScheduleTerm.trim()) {
+        const q = searchScheduleTerm.toLowerCase().trim();
+        const matchesNome = sch.nome.toLowerCase().includes(q);
+        const matchesUnidade = sch.unidade.toLowerCase().includes(q);
+        const matchesProg = sch.programa.toLowerCase().includes(q);
+        if (!matchesNome && !matchesUnidade && !matchesProg) return false;
+      }
       if (filterUnits.length > 0) {
         const schUnits = sch.unidades && sch.unidades.length > 0
           ? sch.unidades
@@ -254,9 +353,65 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
       }
       if (filterPrograms.length > 0 && !filterPrograms.includes(sch.programa)) return false;
       if (filterTypes.length > 0 && !filterTypes.includes(sch.tipo_pedido)) return false;
+      if (!matchesDatePreset(sch)) return false;
       return true;
     });
-  }, [schedules, filterUnits, filterPrograms, filterTypes]);
+
+    list.sort((a, b) => compareSchedulesByDate(a.sch, b.sch, dateSortField, dateSortOrder));
+    return list;
+  }, [
+    scheduleProgressList,
+    selectedScheduleFilter,
+    selectedCompetenciaFilter,
+    searchScheduleTerm,
+    filterUnits,
+    filterPrograms,
+    filterTypes,
+    dateSortField,
+    dateSortOrder,
+    dateFilterPreset
+  ]);
+
+  // Lista filtrada e organizada por data para a aba "Tabela"
+  const filteredSchedulesList = useMemo(() => {
+    const list = schedules.filter(sch => {
+      if (selectedScheduleFilter !== 'ALL' && sch.id !== selectedScheduleFilter) return false;
+      if (selectedCompetenciaFilter !== 'ALL' && sch.competencia !== selectedCompetenciaFilter) return false;
+      if (searchScheduleTerm.trim()) {
+        const q = searchScheduleTerm.toLowerCase().trim();
+        const matchesNome = sch.nome.toLowerCase().includes(q);
+        const matchesUnidade = sch.unidade.toLowerCase().includes(q);
+        const matchesProg = sch.programa.toLowerCase().includes(q);
+        if (!matchesNome && !matchesUnidade && !matchesProg) return false;
+      }
+      if (filterUnits.length > 0) {
+        const schUnits = sch.unidades && sch.unidades.length > 0
+          ? sch.unidades
+          : sch.unidade.includes(',')
+          ? sch.unidade.split(',').map((s: string) => s.trim())
+          : [sch.unidade];
+        if (!schUnits.some((u: string) => filterUnits.includes(u))) return false;
+      }
+      if (filterPrograms.length > 0 && !filterPrograms.includes(sch.programa)) return false;
+      if (filterTypes.length > 0 && !filterTypes.includes(sch.tipo_pedido)) return false;
+      if (!matchesDatePreset(sch)) return false;
+      return true;
+    });
+
+    list.sort((a, b) => compareSchedulesByDate(a, b, dateSortField, dateSortOrder));
+    return list;
+  }, [
+    schedules,
+    selectedScheduleFilter,
+    selectedCompetenciaFilter,
+    searchScheduleTerm,
+    filterUnits,
+    filterPrograms,
+    filterTypes,
+    dateSortField,
+    dateSortOrder,
+    dateFilterPreset
+  ]);
 
   const handleOpenNew = () => {
     setEditingSchedule(null);
@@ -427,6 +582,249 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
     setTimeout(() => setLinkingResult(null), 4000);
   };
 
+  // Barra de Filtros Sincronizada para as abas "Por Progresso" e "Tabela"
+  const renderSynchronizedFilterBar = () => {
+    const hasActiveFilters = 
+      selectedScheduleFilter !== 'ALL' || 
+      selectedCompetenciaFilter !== 'ALL' || 
+      searchScheduleTerm.trim() !== '' || 
+      filterUnits.length > 0 || 
+      filterPrograms.length > 0 || 
+      filterTypes.length > 0 ||
+      dateSortField !== 'data_entrega' ||
+      dateSortOrder !== 'asc' ||
+      dateFilterPreset !== 'TODOS';
+
+    const activeFilterCount = 
+      (selectedScheduleFilter !== 'ALL' ? 1 : 0) +
+      (selectedCompetenciaFilter !== 'ALL' ? 1 : 0) +
+      (searchScheduleTerm.trim() !== '' ? 1 : 0) +
+      filterUnits.length +
+      filterPrograms.length +
+      filterTypes.length +
+      (dateSortField !== 'data_entrega' || dateSortOrder !== 'asc' ? 1 : 0) +
+      (dateFilterPreset !== 'TODOS' ? 1 : 0);
+
+    const activeCount = activeTab === 'progresso' ? filteredScheduleProgressList.length : filteredSchedulesList.length;
+
+    return (
+      <div className="bg-white p-4 rounded-2xl border border-slate-300 shadow-xs space-y-3.5">
+        {/* Linha 1: Filtro de Cronograma, Competência, Período e Organização por Data */}
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+          {/* 1. Filtro de Cronograma */}
+          <div className="col-span-1 sm:col-span-6 lg:col-span-4 space-y-1">
+            <label className="text-[11px] font-bold text-slate-800 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
+                <span>Filtro de Cronograma:</span>
+              </span>
+              {selectedScheduleFilter !== 'ALL' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedScheduleFilter('ALL')}
+                  className="text-[10px] text-blue-700 hover:text-rose-600 font-semibold bg-blue-50 hover:bg-rose-50 px-1.5 py-0.2 rounded border border-blue-200 cursor-pointer"
+                  title="Limpar seleção de cronograma"
+                >
+                  Filtrado ✕
+                </button>
+              )}
+            </label>
+            <select
+              value={selectedScheduleFilter}
+              onChange={(e) => setSelectedScheduleFilter(e.target.value)}
+              className="w-full text-xs font-semibold bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all cursor-pointer shadow-2xs truncate"
+            >
+              <option value="ALL">🌐 Todos os Cronogramas ({schedules.length})</option>
+              {schedules.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.nome} ({s.competencia} · Entrega {formatShortDate(s.data_entrega)})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 2. Filtro de Competência / Ciclo */}
+          <div className="col-span-1 sm:col-span-3 lg:col-span-2 space-y-1">
+            <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+              <CalendarCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Competência:</span>
+            </label>
+            <select
+              value={selectedCompetenciaFilter}
+              onChange={(e) => setSelectedCompetenciaFilter(e.target.value)}
+              className="w-full text-xs font-semibold bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600/30 focus:border-emerald-600 transition-all cursor-pointer shadow-2xs"
+            >
+              <option value="ALL">Todas ({availableCompetencias.length})</option>
+              {availableCompetencias.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* 3. Filtro de Período / Data */}
+          <div className="col-span-1 sm:col-span-3 lg:col-span-3 space-y-1">
+            <label className="text-[11px] font-bold text-slate-800 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-amber-600" />
+                <span>Filtro de Período:</span>
+              </span>
+              {dateFilterPreset !== 'TODOS' && (
+                <button
+                  type="button"
+                  onClick={() => setDateFilterPreset('TODOS')}
+                  className="text-[10px] text-amber-800 hover:text-rose-600 font-semibold bg-amber-50 hover:bg-rose-50 px-1.5 py-0.2 rounded border border-amber-200 cursor-pointer"
+                  title="Limpar filtro de período"
+                >
+                  Filtrado ✕
+                </button>
+              )}
+            </label>
+            <select
+              value={dateFilterPreset}
+              onChange={(e) => setDateFilterPreset(e.target.value as ScheduleDateFilterPreset)}
+              className="w-full text-xs font-semibold bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-600/30 focus:border-amber-600 transition-all cursor-pointer shadow-2xs truncate"
+            >
+              {DATE_FILTER_PRESET_OPTIONS.map(opt => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 4. Filtro de Organização por Data */}
+          <div className="col-span-1 sm:col-span-12 lg:col-span-3 space-y-1">
+            <label className="text-[11px] font-bold text-slate-800 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <ArrowUpDown className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Organização por Data:</span>
+              </span>
+              <span className="text-[10px] text-indigo-700 font-mono font-bold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                {dateSortOrder === 'asc' ? 'Mais Próximas ↑' : 'Mais Distantes ↓'}
+              </span>
+            </label>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={dateSortField}
+                onChange={(e) => setDateSortField(e.target.value as ScheduleDateSortField)}
+                className="flex-1 text-xs font-semibold bg-slate-50 hover:bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-600/30 focus:border-indigo-600 transition-all cursor-pointer shadow-2xs truncate"
+              >
+                {DATE_SORT_OPTIONS.map(opt => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setDateSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))}
+                className="px-2.5 py-2 text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-xl transition-all cursor-pointer shadow-2xs shrink-0 flex items-center gap-1"
+                title={`Alternar direção: atualmente ${dateSortOrder === 'asc' ? 'Crescente (Mais próximas primeiro)' : 'Decrescente (Mais distantes primeiro)'}`}
+              >
+                {dateSortOrder === 'asc' ? (
+                  <>
+                    <ArrowUp className="w-3.5 h-3.5 text-indigo-700" />
+                    <span className="hidden sm:inline text-[11px]">Cresc.</span>
+                  </>
+                ) : (
+                  <>
+                    <ArrowDown className="w-3.5 h-3.5 text-indigo-700" />
+                    <span className="hidden sm:inline text-[11px]">Decresc.</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Linha 2: Busca por texto, Multi-selects (Unidades, Programas, Tipos) e Contadores em Grid Alinhado */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5 pt-3 border-t border-slate-200/80 items-center">
+          <div className="col-span-1 sm:col-span-2 lg:col-span-4 relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchScheduleTerm}
+              onChange={(e) => setSearchScheduleTerm(e.target.value)}
+              placeholder="Buscar por nome, unidade ou programa..."
+              className="w-full pl-8 pr-7 py-2 text-xs bg-slate-50 hover:bg-white focus:bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600/30 text-slate-900 shadow-2xs font-medium"
+            />
+            {searchScheduleTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchScheduleTerm('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="col-span-1 sm:col-span-1 lg:col-span-2">
+            <MultiSelect
+              options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
+              selected={filterUnits}
+              onChange={setFilterUnits}
+              placeholder="Todas as Unidades"
+              className="w-full"
+              showSearch={true}
+              align="left"
+            />
+          </div>
+
+          <div className="col-span-1 sm:col-span-1 lg:col-span-2">
+            <MultiSelect
+              options={programs.map(p => ({ id: p.nome, label: p.nome }))}
+              selected={filterPrograms}
+              onChange={setFilterPrograms}
+              placeholder="Todos os Programas"
+              className="w-full"
+              align="left"
+            />
+          </div>
+
+          <div className="col-span-1 sm:col-span-1 lg:col-span-2">
+            <MultiSelect
+              options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
+              selected={filterTypes}
+              onChange={setFilterTypes}
+              placeholder="Todos os Tipos"
+              className="w-full"
+              align="right"
+            />
+          </div>
+
+          <div className="col-span-1 sm:col-span-1 lg:col-span-2 flex items-center justify-between sm:justify-end gap-2">
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedScheduleFilter('ALL');
+                  setSelectedCompetenciaFilter('ALL');
+                  setSearchScheduleTerm('');
+                  setFilterUnits([]);
+                  setFilterPrograms([]);
+                  setFilterTypes([]);
+                  setDateSortField('data_entrega');
+                  setDateSortOrder('asc');
+                  setDateFilterPreset('TODOS');
+                }}
+                className="text-xs text-rose-700 hover:text-rose-900 font-bold px-2.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-2xs whitespace-nowrap"
+                title="Limpar todos os filtros aplicados"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Limpar ({activeFilterCount})</span>
+              </button>
+            )}
+
+            <span className="font-mono text-xs font-bold bg-blue-50 text-blue-700 px-2.5 py-2 rounded-xl border border-blue-200 shadow-2xs whitespace-nowrap text-center">
+              {activeCount} de {schedules.length}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       {/* Top Header Controls Bar */}
@@ -512,6 +910,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
           </button>
 
           <button
+            onClick={() => setBatchLinkScheduleId('ANY')}
+            disabled={currentUser.role === 'VIEWER'}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all active:scale-95 cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
+            title="Vincular múltiplos pedidos a um cronograma em uma única ação"
+          >
+            <Link2 className="w-3.5 h-3.5 text-blue-600" />
+            <span>Vincular em Lote</span>
+          </button>
+
+          <button
             onClick={handleOpenNew}
             disabled={currentUser.role === 'VIEWER'}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer whitespace-nowrap shrink-0"
@@ -540,104 +948,144 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
           onSelectOrder={onSelectOrder} 
           onOpenNewSchedule={handleOpenNewForDay}
           onOpenScheduleOrders={(sch, filter) => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: filter || 'ALL' })}
+          selectedScheduleProp={selectedScheduleFilter}
+          onSelectSchedule={setSelectedScheduleFilter}
         />
       )}
 
       {/* VIEW 2: VISÃO POR PROGRESSO */}
       {activeTab === 'progresso' && (
         <div className="space-y-4">
-          {/* Multi-Select Filter Bar */}
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-300 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <MultiSelect
-                options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
-                selected={filterUnits}
-                onChange={setFilterUnits}
-                placeholder="Todas as Unidades"
-                className="flex-1 sm:flex-initial sm:w-48"
-                showSearch={true}
-              />
-              <MultiSelect
-                options={programs.map(p => ({ id: p.nome, label: p.nome }))}
-                selected={filterPrograms}
-                onChange={setFilterPrograms}
-                placeholder="Todos os Programas"
-                className="flex-1 sm:flex-initial sm:w-44"
-              />
-              <MultiSelect
-                options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
-                selected={filterTypes}
-                onChange={setFilterTypes}
-                placeholder="Todos os Tipos"
-                className="flex-1 sm:flex-initial sm:w-40"
-              />
-              {(filterUnits.length > 0 || filterPrograms.length > 0 || filterTypes.length > 0) && (
-                <button
-                  onClick={() => {
-                    setFilterUnits([]);
-                    setFilterPrograms([]);
-                    setFilterTypes([]);
-                  }}
-                  className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-2xs whitespace-nowrap"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Limpar ({filterUnits.length + filterPrograms.length + filterTypes.length})</span>
-                </button>
-              )}
+          {/* Synchronized Filter Bar */}
+          {renderSynchronizedFilterBar()}
+
+          {/* Banner de Sincronização e Organização Ativa */}
+          {(selectedScheduleFilter !== 'ALL' || dateFilterPreset !== 'TODOS' || dateSortField !== 'data_entrega' || dateSortOrder !== 'asc') && (
+            <div className="bg-gradient-to-r from-blue-50/90 to-indigo-50/90 border border-blue-200/80 rounded-2xl p-3 flex items-center justify-between gap-3 text-xs text-slate-800 shadow-2xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+                <span className="font-bold text-slate-900">Visualização Sincronizada:</span>
+                {selectedScheduleFilter !== 'ALL' && (
+                  <span className="bg-blue-100 text-blue-900 px-2 py-0.5 rounded-lg font-bold border border-blue-200">
+                    Cronograma: {schedules.find(s => s.id === selectedScheduleFilter)?.nome || selectedScheduleFilter}
+                  </span>
+                )}
+                <span className="bg-indigo-100 text-indigo-900 px-2 py-0.5 rounded-lg font-bold border border-indigo-200">
+                  Organizado por: {DATE_SORT_OPTIONS.find(o => o.id === dateSortField)?.shortLabel} ({dateSortOrder === 'asc' ? 'Crescente ↑' : 'Decrescente ↓'})
+                </span>
+                {dateFilterPreset !== 'TODOS' && (
+                  <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-lg font-bold border border-amber-200">
+                    Período: {DATE_FILTER_PRESET_OPTIONS.find(p => p.id === dateFilterPreset)?.label}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedScheduleFilter('ALL');
+                  setDateFilterPreset('TODOS');
+                  setDateSortField('data_entrega');
+                  setDateSortOrder('asc');
+                }}
+                className="text-xs text-blue-700 hover:text-blue-950 font-bold underline cursor-pointer shrink-0"
+              >
+                Redefinir
+              </button>
             </div>
+          )}
 
-            <span className="font-mono text-xs font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full border border-blue-200 shadow-2xs">
-              {filteredScheduleProgressList.length} de {schedules.length} cronogramas
-            </span>
-          </div>
+          {filteredScheduleProgressList.length === 0 ? (
+            <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-3 shadow-xs">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
+                <Search className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-800">Nenhum cronograma encontrado</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Não existem cronogramas correspondentes aos filtros selecionados. Tente ajustar os parâmetros ou redefinir a busca.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedScheduleFilter('ALL');
+                  setSelectedCompetenciaFilter('ALL');
+                  setSearchScheduleTerm('');
+                  setFilterUnits([]);
+                  setFilterPrograms([]);
+                  setFilterTypes([]);
+                  setDateSortField('data_entrega');
+                  setDateSortOrder('asc');
+                  setDateFilterPreset('TODOS');
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Limpar Filtros</span>
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredScheduleProgressList.map(({ sch, total, delivered, inTransport, inSeparation, awaiting, noPrazo, atencao, foraDoPrazo, progressPercent, currentMilestone }) => {
+                let barColor = 'bg-blue-600';
+                if (progressPercent >= 80) barColor = 'bg-emerald-600';
+                else if (progressPercent >= 50) barColor = 'bg-purple-600';
+                else if (progressPercent >= 25) barColor = 'bg-amber-500';
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredScheduleProgressList.map(({ sch, total, delivered, inTransport, inSeparation, awaiting, noPrazo, atencao, foraDoPrazo, progressPercent, currentMilestone }) => {
-              let barColor = 'bg-blue-600';
-              if (progressPercent >= 80) barColor = 'bg-emerald-600';
-              else if (progressPercent >= 50) barColor = 'bg-purple-600';
-              else if (progressPercent >= 25) barColor = 'bg-amber-500';
+                const unitsList = sch.unidades && sch.unidades.length > 0
+                  ? sch.unidades
+                  : sch.unidade.includes(',')
+                  ? sch.unidade.split(',').map(s => s.trim())
+                  : [sch.unidade];
 
-              const unitsList = sch.unidades && sch.unidades.length > 0
-                ? sch.unidades
-                : sch.unidade.includes(',')
-                ? sch.unidade.split(',').map(s => s.trim())
-                : [sch.unidade];
-
-              return (
-                <div 
-                  key={sch.id} 
-                  className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-blue-300 hover:-translate-y-1 transition-all duration-200 space-y-3.5 group"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {unitsList.length > 1 ? (
-                          <>
-                            {unitsList.map(u => (
-                              <span key={u} className="px-2 py-0.5 rounded-full bg-blue-100/90 text-blue-900 border border-blue-200 text-xs font-bold">
-                                {u}
-                              </span>
-                            ))}
-                            <span className="text-[10px] text-slate-500 font-semibold">({unitsList.length} un.)</span>
-                          </>
-                        ) : (
-                          <span className="font-bold text-slate-900 text-sm group-hover:text-blue-700 transition-colors">
-                            {sch.unidade}
+                return (
+                  <div 
+                    key={sch.id} 
+                    className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-blue-300 hover:-translate-y-1 transition-all duration-200 space-y-3.5 group"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {unitsList.length > 1 ? (
+                            <>
+                              {unitsList.map(u => (
+                                <span key={u} className="px-2 py-0.5 rounded-full bg-blue-100/90 text-blue-900 border border-blue-200 text-xs font-bold">
+                                  {u}
+                                </span>
+                              ))}
+                              <span className="text-[10px] text-slate-500 font-semibold">({unitsList.length} un.)</span>
+                            </>
+                          ) : (
+                            <span className="font-bold text-slate-900 text-sm group-hover:text-blue-700 transition-colors">
+                              {sch.unidade}
+                            </span>
+                          )}
+                          <span className="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold">
+                            {sch.competencia}
                           </span>
-                        )}
-                        <span className="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold">
-                          {sch.competencia}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-500 mt-0.5">{sch.nome} · {sch.programa}</p>
-                    </div>
 
-                    <div className="text-right">
-                      <span className="text-xl font-bold font-mono text-slate-900">{progressPercent}%</span>
-                      <span className="text-[10px] text-slate-400 block font-semibold">Progresso</span>
+                          {/* Dynamic Date Organization Badge */}
+                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold border inline-flex items-center gap-1 ${
+                            dateSortField === 'data_entrega'
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              : dateSortField === 'data_expedicao'
+                              ? 'bg-cyan-50 text-cyan-800 border-cyan-200'
+                              : dateSortField === 'data_separacao'
+                              ? 'bg-purple-50 text-purple-800 border-purple-200'
+                              : dateSortField === 'data_limite_aprovacao'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : 'bg-blue-50 text-blue-800 border-blue-200'
+                          }`}>
+                            <span>{DATE_SORT_OPTIONS.find(o => o.id === dateSortField)?.shortLabel}:</span>
+                            <span>{formatShortDate(sch[dateSortField])}</span>
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">{sch.nome} · {sch.programa}</p>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="text-xl font-bold font-mono text-slate-900">{progressPercent}%</span>
+                        <span className="text-[10px] text-slate-400 block font-semibold">Progresso</span>
+                      </div>
                     </div>
-                  </div>
 
                   {/* Progress Bar */}
                   <div className="space-y-1.5">
@@ -715,15 +1163,27 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'ALL' })}
-                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-xs transition-colors cursor-pointer ml-auto"
-                      title="Auditar progresso, verificar pedidos no prazo/fora do prazo e definir inicialização"
-                    >
-                      <Sparkles className="w-3 h-3 text-blue-600" />
-                      <span>Auditar Pedidos</span>
-                    </button>
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <button
+                        type="button"
+                        onClick={() => setBatchLinkScheduleId(sch.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
+                        title="Vincular mais pedidos a este cronograma em uma única ação"
+                      >
+                        <Link2 className="w-3 h-3 text-slate-600" />
+                        <span>Vincular</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'ALL' })}
+                        className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-xs transition-colors cursor-pointer"
+                        title="Auditar progresso, verificar pedidos no prazo/fora do prazo e definir inicialização"
+                      >
+                        <Sparkles className="w-3 h-3 text-blue-600" />
+                        <span>Auditar Pedidos</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Dates footer */}
@@ -749,247 +1209,354 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
               );
             })}
           </div>
-        </div>
-      )}
+        )}
+      </div>
+    )}
 
       {/* VIEW 3: TABELA DETALHADA DE CRONOGRAMAS */}
       {activeTab === 'lista' && (
         <div className="space-y-4">
-          {/* Multi-Select Filter Bar */}
-          <div className="bg-white p-3.5 rounded-2xl border border-slate-300 shadow-xs flex flex-wrap items-center justify-between gap-2.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <MultiSelect
-                options={units.map(u => ({ id: u.sigla, label: u.sigla, subLabel: u.nome }))}
-                selected={filterUnits}
-                onChange={setFilterUnits}
-                placeholder="Todas as Unidades"
-                className="flex-1 sm:flex-initial sm:w-48"
-                showSearch={true}
-              />
-              <MultiSelect
-                options={programs.map(p => ({ id: p.nome, label: p.nome }))}
-                selected={filterPrograms}
-                onChange={setFilterPrograms}
-                placeholder="Todos os Programas"
-                className="flex-1 sm:flex-initial sm:w-44"
-              />
-              <MultiSelect
-                options={orderTypes.map(t => ({ id: t.nome, label: t.nome, color: t.cor }))}
-                selected={filterTypes}
-                onChange={setFilterTypes}
-                placeholder="Todos os Tipos"
-                className="flex-1 sm:flex-initial sm:w-40"
-              />
-              {(filterUnits.length > 0 || filterPrograms.length > 0 || filterTypes.length > 0) && (
-                <button
-                  onClick={() => {
-                    setFilterUnits([]);
-                    setFilterPrograms([]);
-                    setFilterTypes([]);
-                  }}
-                  className="text-xs text-rose-700 hover:text-rose-900 font-bold px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-300 active:scale-95 transition-all cursor-pointer flex items-center gap-1 shadow-2xs whitespace-nowrap"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Limpar ({filterUnits.length + filterPrograms.length + filterTypes.length})</span>
-                </button>
-              )}
+          {/* Synchronized Filter Bar */}
+          {renderSynchronizedFilterBar()}
+
+          {/* Banner de Sincronização e Organização Ativa na Tabela */}
+          {(selectedScheduleFilter !== 'ALL' || dateFilterPreset !== 'TODOS' || dateSortField !== 'data_entrega' || dateSortOrder !== 'asc') && (
+            <div className="bg-gradient-to-r from-blue-50/90 to-indigo-50/90 border border-blue-200/80 rounded-2xl p-3 flex items-center justify-between gap-3 text-xs text-slate-800 shadow-2xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+                <span className="font-bold text-slate-900">Visualização Sincronizada:</span>
+                {selectedScheduleFilter !== 'ALL' && (
+                  <span className="bg-blue-100 text-blue-900 px-2 py-0.5 rounded-lg font-bold border border-blue-200">
+                    Cronograma: {schedules.find(s => s.id === selectedScheduleFilter)?.nome || selectedScheduleFilter}
+                  </span>
+                )}
+                <span className="bg-indigo-100 text-indigo-900 px-2 py-0.5 rounded-lg font-bold border border-indigo-200">
+                  Coluna Ativa: {DATE_SORT_OPTIONS.find(o => o.id === dateSortField)?.shortLabel} ({dateSortOrder === 'asc' ? 'Crescente ↑' : 'Decrescente ↓'})
+                </span>
+                {dateFilterPreset !== 'TODOS' && (
+                  <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-lg font-bold border border-amber-200">
+                    Período: {DATE_FILTER_PRESET_OPTIONS.find(p => p.id === dateFilterPreset)?.label}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedScheduleFilter('ALL');
+                  setDateFilterPreset('TODOS');
+                  setDateSortField('data_entrega');
+                  setDateSortOrder('asc');
+                }}
+                className="text-xs text-blue-700 hover:text-blue-950 font-bold underline cursor-pointer shrink-0"
+              >
+                Redefinir
+              </button>
             </div>
+          )}
 
-            <span className="font-mono text-xs font-bold bg-blue-50 text-blue-700 px-3 py-1 rounded-full border border-blue-200 shadow-2xs">
-              {filteredSchedulesList.length} de {schedules.length} cronogramas
-            </span>
-          </div>
-
-          <div className="bg-white rounded-3xl border border-slate-200/80 overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/80 border-b border-slate-200/80 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
-                  <tr>
-                    <th className="py-3 px-4">Cronograma / Competência</th>
-                    <th className="py-3 px-3">Unidade & Programa</th>
-                    <th className="py-3 px-3">Tipo</th>
-                    <th className="py-3 px-3 text-center">1. Limite Solicitação</th>
-                    <th className="py-3 px-3 text-center">2. Limite Aprovação</th>
-                    <th className="py-3 px-3 text-center">3. Início Separação</th>
-                    <th className="py-3 px-3 text-center">4. Expedição</th>
-                    <th className="py-3 px-3 text-center font-bold text-emerald-800">5. Entrega Hospital</th>
-                    <th className="py-3 px-3 text-center">Progresso & Prazos (SLA)</th>
-                    <th className="py-3 px-3 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-normal">
-                  {filteredSchedulesList.map((sch) => {
-                  const prog = scheduleProgressList.find(p => p.sch.id === sch.id);
-                  return (
-                  <tr key={sch.id} className="hover:bg-blue-50/40 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="font-bold text-slate-900">{sch.nome}</div>
-                      <span className="font-mono text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold">
-                        {sch.competencia}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3">
-                      {sch.unidades && sch.unidades.length > 1 ? (
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {sch.unidades.map(u => (
-                            <span key={u} className="px-1.5 py-0.2 rounded-md bg-blue-100/90 text-blue-900 font-bold text-[10px]">
-                              {u}
-                            </span>
-                          ))}
-                          <span className="text-[10px] text-slate-400 font-semibold">({sch.unidades.length} un.)</span>
+          {filteredSchedulesList.length === 0 ? (
+            <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-3 shadow-xs">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
+                <Search className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-800">Nenhum cronograma encontrado</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Não existem cronogramas correspondentes aos filtros selecionados. Tente ajustar os parâmetros ou redefinir a busca.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedScheduleFilter('ALL');
+                  setSelectedCompetenciaFilter('ALL');
+                  setSearchScheduleTerm('');
+                  setFilterUnits([]);
+                  setFilterPrograms([]);
+                  setFilterTypes([]);
+                  setDateSortField('data_entrega');
+                  setDateSortOrder('asc');
+                  setDateFilterPreset('TODOS');
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Limpar Filtros</span>
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white rounded-3xl border border-slate-200/80 overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50/80 border-b border-slate-200/80 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Cronograma / Competência</th>
+                      <th className="py-3 px-3">Unidade & Programa</th>
+                      <th className="py-3 px-3">Tipo</th>
+                      <th 
+                        onClick={() => handleToggleDateSort('data_limite_solicitacao')}
+                        className={`py-3 px-3 text-center cursor-pointer transition-colors select-none group ${
+                          dateSortField === 'data_limite_solicitacao' ? 'bg-blue-100/80 text-blue-900 font-extrabold' : 'hover:bg-slate-100 text-slate-600'
+                        }`}
+                        title="Clique para organizar por Limite de Solicitação"
+                      >
+                        <div className="inline-flex items-center justify-center gap-1 w-full">
+                          <span>1. Limite Solicitação</span>
+                          {dateSortField === 'data_limite_solicitacao' ? (
+                            dateSortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-700" /> : <ArrowDown className="w-3 h-3 text-blue-700" />
+                          ) : (
+                            <ArrowUpDown className="w-2.5 h-2.5 text-slate-300 opacity-0 group-hover:opacity-100" />
+                          )}
                         </div>
-                      ) : (
-                        <strong className="text-slate-800">{sch.unidade}</strong>
-                      )}
-                      <div className="text-[11px] text-slate-500">{sch.programa}</div>
-                    </td>
-                    <td className="py-3 px-3">
-                      <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold text-[11px] border border-blue-200/70">
-                        {sch.tipo_pedido}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-center font-mono text-slate-700 font-medium">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDayFromDate(sch.data_limite_solicitacao, sch.tipo_pedido)}
-                        className="hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors"
-                        title={`Clique para abrir pedidos vinculados a ${formatShortDate(sch.data_limite_solicitacao)}`}
+                      </th>
+                      <th 
+                        onClick={() => handleToggleDateSort('data_limite_aprovacao')}
+                        className={`py-3 px-3 text-center cursor-pointer transition-colors select-none group ${
+                          dateSortField === 'data_limite_aprovacao' ? 'bg-blue-100/80 text-blue-900 font-extrabold' : 'hover:bg-slate-100 text-slate-600'
+                        }`}
+                        title="Clique para organizar por Limite de Aprovação"
                       >
-                        {formatShortDate(sch.data_limite_solicitacao)}
-                      </button>
-                    </td>
-                    <td className="py-3 px-3 text-center font-mono text-slate-700 font-medium">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDayFromDate(sch.data_limite_aprovacao, sch.tipo_pedido)}
-                        className="hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors"
-                        title={`Clique para abrir pedidos vinculados a ${formatShortDate(sch.data_limite_aprovacao)}`}
-                      >
-                        {formatShortDate(sch.data_limite_aprovacao)}
-                      </button>
-                    </td>
-                    <td className="py-3 px-3 text-center font-mono text-slate-700 font-medium">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDayFromDate(sch.data_separacao, sch.tipo_pedido)}
-                        className="hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors"
-                        title={`Clique para abrir pedidos vinculados a ${formatShortDate(sch.data_separacao)}`}
-                      >
-                        {formatShortDate(sch.data_separacao)}
-                      </button>
-                    </td>
-                    <td className="py-3 px-3 text-center font-mono text-slate-700 font-medium">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDayFromDate(sch.data_expedicao, sch.tipo_pedido)}
-                        className="hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors"
-                        title={`Clique para abrir pedidos vinculados a ${formatShortDate(sch.data_expedicao)}`}
-                      >
-                        {formatShortDate(sch.data_expedicao)}
-                      </button>
-                    </td>
-                    <td className="py-3 px-3 text-center font-mono font-bold text-emerald-700">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDayFromDate(sch.data_entrega, sch.tipo_pedido)}
-                        className="hover:text-emerald-900 hover:bg-emerald-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors font-bold"
-                        title={`Clique para abrir pedidos vinculados à entrega em ${formatShortDate(sch.data_entrega)}`}
-                      >
-                        {formatShortDate(sch.data_entrega)}
-                      </button>
-                    </td>
-
-                    {/* Progresso & Prazos (SLA) Column */}
-                    <td className="py-3 px-3">
-                      {prog ? (
-                        <div className="space-y-1.5 min-w-36">
-                          <div className="flex items-center justify-between text-[11px]">
-                            <button
-                              type="button"
-                              onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'ALL' })}
-                              className="font-bold text-slate-800 hover:text-blue-700 hover:underline cursor-pointer flex items-center gap-1"
-                              title="Abrir auditoria do cronograma"
-                            >
-                              <span>{prog.progressPercent}%</span>
-                              <span className="text-slate-400 font-normal">({prog.delivered}/{prog.total})</span>
-                            </button>
-                            <span className="text-[10px] text-blue-700 font-semibold">{prog.currentMilestone}</span>
-                          </div>
-                          <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full ${prog.progressPercent >= 80 ? 'bg-emerald-600' : prog.progressPercent >= 50 ? 'bg-purple-600' : 'bg-blue-600'} rounded-full transition-all`}
-                              style={{ width: `${prog.progressPercent}%` }}
-                            />
-                          </div>
-                          <div className="flex items-center gap-1 text-[10px]">
-                            <button
-                              type="button"
-                              onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'NO_PRAZO' })}
-                              className="px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 font-semibold cursor-pointer"
-                              title={`${prog.noPrazo} pedidos no prazo`}
-                            >
-                              🟢 {prog.noPrazo}
-                            </button>
-                            {prog.foraDoPrazo > 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'FORA_DO_PRAZO' })}
-                                className="px-1.5 py-0.2 rounded-full bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-300 font-bold cursor-pointer animate-pulse"
-                                title={`${prog.foraDoPrazo} pedidos fora do prazo / atrasados`}
-                              >
-                                🔴 {prog.foraDoPrazo}
-                              </button>
-                            ) : (
-                              <span className="text-slate-400 text-[10px]">0 atrasos</span>
-                            )}
-                          </div>
+                        <div className="inline-flex items-center justify-center gap-1 w-full">
+                          <span>2. Limite Aprovação</span>
+                          {dateSortField === 'data_limite_aprovacao' ? (
+                            dateSortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-700" /> : <ArrowDown className="w-3 h-3 text-blue-700" />
+                          ) : (
+                            <ArrowUpDown className="w-2.5 h-2.5 text-slate-300 opacity-0 group-hover:opacity-100" />
+                          )}
                         </div>
-                      ) : (
-                        <span className="text-slate-400 text-xs">—</span>
-                      )}
-                    </td>
-
-                    <td className="py-3 px-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
+                      </th>
+                      <th 
+                        onClick={() => handleToggleDateSort('data_separacao')}
+                        className={`py-3 px-3 text-center cursor-pointer transition-colors select-none group ${
+                          dateSortField === 'data_separacao' ? 'bg-blue-100/80 text-blue-900 font-extrabold' : 'hover:bg-slate-100 text-slate-600'
+                        }`}
+                        title="Clique para organizar por Início da Separação"
+                      >
+                        <div className="inline-flex items-center justify-center gap-1 w-full">
+                          <span>3. Início Separação</span>
+                          {dateSortField === 'data_separacao' ? (
+                            dateSortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-700" /> : <ArrowDown className="w-3 h-3 text-blue-700" />
+                          ) : (
+                            <ArrowUpDown className="w-2.5 h-2.5 text-slate-300 opacity-0 group-hover:opacity-100" />
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleToggleDateSort('data_expedicao')}
+                        className={`py-3 px-3 text-center cursor-pointer transition-colors select-none group ${
+                          dateSortField === 'data_expedicao' ? 'bg-blue-100/80 text-blue-900 font-extrabold' : 'hover:bg-slate-100 text-slate-600'
+                        }`}
+                        title="Clique para organizar por Expedição / Trânsito"
+                      >
+                        <div className="inline-flex items-center justify-center gap-1 w-full">
+                          <span>4. Expedição</span>
+                          {dateSortField === 'data_expedicao' ? (
+                            dateSortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-700" /> : <ArrowDown className="w-3 h-3 text-blue-700" />
+                          ) : (
+                            <ArrowUpDown className="w-2.5 h-2.5 text-slate-300 opacity-0 group-hover:opacity-100" />
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleToggleDateSort('data_entrega')}
+                        className={`py-3 px-3 text-center cursor-pointer transition-colors select-none group ${
+                          dateSortField === 'data_entrega' ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-slate-100 text-emerald-800 font-bold'
+                        }`}
+                        title="Clique para organizar por Entrega no Hospital"
+                      >
+                        <div className="inline-flex items-center justify-center gap-1 w-full">
+                          <span>5. Entrega Hospital</span>
+                          {dateSortField === 'data_entrega' ? (
+                            dateSortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-emerald-700" /> : <ArrowDown className="w-3 h-3 text-emerald-700" />
+                          ) : (
+                            <ArrowUpDown className="w-2.5 h-2.5 text-slate-300 opacity-0 group-hover:opacity-100" />
+                          )}
+                        </div>
+                      </th>
+                      <th className="py-3 px-3 text-center">Progresso & Prazos (SLA)</th>
+                      <th className="py-3 px-3 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-normal">
+                    {filteredSchedulesList.map((sch) => {
+                    const prog = scheduleProgressList.find(p => p.sch.id === sch.id);
+                    return (
+                    <tr key={sch.id} className="hover:bg-blue-50/40 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900">{sch.nome}</div>
+                        <span className="font-mono text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold">
+                          {sch.competencia}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3">
+                        {sch.unidades && sch.unidades.length > 1 ? (
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {sch.unidades.map(u => (
+                              <span key={u} className="px-1.5 py-0.2 rounded-md bg-blue-100/90 text-blue-900 font-bold text-[10px]">
+                                {u}
+                              </span>
+                            ))}
+                            <span className="text-[10px] text-slate-400 font-semibold">({sch.unidades.length} un.)</span>
+                          </div>
+                        ) : (
+                          <strong className="text-slate-800">{sch.unidade}</strong>
+                        )}
+                        <div className="text-[11px] text-slate-500">{sch.programa}</div>
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold text-[11px] border border-blue-200/70">
+                          {sch.tipo_pedido}
+                        </span>
+                      </td>
+                      <td className={`py-3 px-3 text-center font-mono font-medium ${dateSortField === 'data_limite_solicitacao' ? 'bg-blue-50/60 font-bold text-blue-950' : 'text-slate-700'}`}>
                         <button
                           type="button"
-                          onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'ALL' })}
-                          className="p-1.5 rounded-full text-blue-600 hover:text-blue-800 hover:bg-blue-50 transition-colors cursor-pointer"
-                          title="Auditar progresso, verificar pedidos no prazo/fora do prazo e definir inicialização"
+                          onClick={() => handleOpenDayFromDate(sch.data_limite_solicitacao, sch.tipo_pedido)}
+                          className="hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors"
+                          title={`Clique para abrir pedidos vinculados a ${formatShortDate(sch.data_limite_solicitacao)}`}
                         >
-                          <TrendingUp className="w-3.5 h-3.5" />
+                          {formatShortDate(sch.data_limite_solicitacao)}
                         </button>
-                        {currentUser.role !== 'VIEWER' && (
-                          <>
-                            <button
-                              onClick={() => handleOpenEdit(sch)}
-                              className="p-1.5 rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
-                              title="Editar datas e prazos"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (confirm(`Excluir cronograma ${sch.nome}?`)) {
-                                  deleteSchedule(sch.id);
-                                }
-                              }}
-                              className="p-1.5 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                              title="Excluir"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </>
+                      </td>
+                      <td className={`py-3 px-3 text-center font-mono font-medium ${dateSortField === 'data_limite_aprovacao' ? 'bg-blue-50/60 font-bold text-blue-950' : 'text-slate-700'}`}>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDayFromDate(sch.data_limite_aprovacao, sch.tipo_pedido)}
+                          className="hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors"
+                          title={`Clique para abrir pedidos vinculados a ${formatShortDate(sch.data_limite_aprovacao)}`}
+                        >
+                          {formatShortDate(sch.data_limite_aprovacao)}
+                        </button>
+                      </td>
+                      <td className={`py-3 px-3 text-center font-mono font-medium ${dateSortField === 'data_separacao' ? 'bg-blue-50/60 font-bold text-blue-950' : 'text-slate-700'}`}>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDayFromDate(sch.data_separacao, sch.tipo_pedido)}
+                          className="hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors"
+                          title={`Clique para abrir pedidos vinculados a ${formatShortDate(sch.data_separacao)}`}
+                        >
+                          {formatShortDate(sch.data_separacao)}
+                        </button>
+                      </td>
+                      <td className={`py-3 px-3 text-center font-mono font-medium ${dateSortField === 'data_expedicao' ? 'bg-blue-50/60 font-bold text-blue-950' : 'text-slate-700'}`}>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDayFromDate(sch.data_expedicao, sch.tipo_pedido)}
+                          className="hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors"
+                          title={`Clique para abrir pedidos vinculados a ${formatShortDate(sch.data_expedicao)}`}
+                        >
+                          {formatShortDate(sch.data_expedicao)}
+                        </button>
+                      </td>
+                      <td className={`py-3 px-3 text-center font-mono font-bold ${dateSortField === 'data_entrega' ? 'bg-emerald-100/60 text-emerald-950 font-black' : 'text-emerald-700'}`}>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDayFromDate(sch.data_entrega, sch.tipo_pedido)}
+                          className="hover:text-emerald-900 hover:bg-emerald-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors font-bold"
+                          title={`Clique para abrir pedidos vinculados à entrega em ${formatShortDate(sch.data_entrega)}`}
+                        >
+                          {formatShortDate(sch.data_entrega)}
+                        </button>
+                      </td>
+
+                      {/* Progresso & Prazos (SLA) Column */}
+                      <td className="py-3 px-3">
+                        {prog ? (
+                          <div className="space-y-1.5 min-w-36">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <button
+                                type="button"
+                                onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'ALL' })}
+                                className="font-bold text-slate-800 hover:text-blue-700 hover:underline cursor-pointer flex items-center gap-1"
+                                title="Abrir auditoria do cronograma"
+                              >
+                                <span>{prog.progressPercent}%</span>
+                                <span className="text-slate-400 font-normal">({prog.delivered}/{prog.total})</span>
+                              </button>
+                              <span className="text-[10px] text-blue-700 font-semibold">{prog.currentMilestone}</span>
+                            </div>
+                            <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full ${prog.progressPercent >= 80 ? 'bg-emerald-600' : prog.progressPercent >= 50 ? 'bg-purple-600' : 'bg-blue-600'} rounded-full transition-all`}
+                                style={{ width: `${prog.progressPercent}%` }}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1 text-[10px]">
+                              <button
+                                type="button"
+                                onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'NO_PRAZO' })}
+                                className="px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 font-semibold cursor-pointer"
+                                title={`${prog.noPrazo} pedidos no prazo`}
+                              >
+                                🟢 {prog.noPrazo}
+                              </button>
+                              {prog.foraDoPrazo > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'FORA_DO_PRAZO' })}
+                                  className="px-1.5 py-0.2 rounded-full bg-rose-50 text-rose-800 hover:bg-rose-100 border border-rose-300 font-bold cursor-pointer animate-pulse"
+                                  title={`${prog.foraDoPrazo} pedidos fora do prazo / atrasados`}
+                                >
+                                  🔴 {prog.foraDoPrazo}
+                                </button>
+                              ) : (
+                                <span className="text-slate-400 text-[10px]">0 atrasos</span>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-xs">—</span>
                         )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              </tbody>
-            </table>
+                      </td>
+
+                      <td className="py-3 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setScheduleOrdersModalConfig({ schedule: sch, initialFilter: 'ALL' })}
+                            className="p-1.5 rounded-full text-blue-600 hover:text-blue-800 hover:bg-blue-50 transition-colors cursor-pointer"
+                            title="Auditar progresso, verificar pedidos no prazo/fora do prazo e definir inicialização"
+                          >
+                            <TrendingUp className="w-3.5 h-3.5" />
+                          </button>
+                          {currentUser.role !== 'VIEWER' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setBatchLinkScheduleId(sch.id)}
+                                className="p-1.5 rounded-full text-slate-500 hover:text-blue-700 hover:bg-blue-50 transition-colors cursor-pointer"
+                                title="Vincular pedidos a este cronograma em uma única ação"
+                              >
+                                <Link2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleOpenEdit(sch)}
+                                className="p-1.5 rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                                title="Editar datas e prazos"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Excluir cronograma ${sch.nome}?`)) {
+                                    deleteSchedule(sch.id);
+                                  }
+                                }}
+                                className="p-1.5 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Excluir"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+          )}
         </div>
       )}
 
@@ -1437,6 +2004,15 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
           schedule={scheduleOrdersModalConfig.schedule}
           initialFilter={scheduleOrdersModalConfig.initialFilter || 'ALL'}
           onSelectOrder={onSelectOrder}
+        />
+      )}
+
+      {/* Batch Link Orders Modal */}
+      {batchLinkScheduleId && (
+        <BatchLinkOrdersModal
+          isOpen={true}
+          onClose={() => setBatchLinkScheduleId(null)}
+          preselectedScheduleId={batchLinkScheduleId === 'ANY' ? undefined : batchLinkScheduleId}
         />
       )}
     </div>

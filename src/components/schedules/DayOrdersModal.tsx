@@ -571,9 +571,10 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                   onOpenLinkModal();
                 }}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition-all cursor-pointer"
+                title="Vincular um ou múltiplos pedidos a este dia do calendário"
               >
                 <Link2 className="w-3.5 h-3.5" />
-                <span>+ Vincular Pedido</span>
+                <span>+ Vincular Pedidos a este Dia</span>
               </button>
             )}
           </div>
@@ -855,8 +856,20 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="p-12 text-center text-xs text-slate-500 italic bg-slate-50 rounded-2xl border border-slate-300">
-                  Nenhum pedido encontrado para os filtros ativos do calendário neste dia.
+                <div className="p-12 text-center text-xs text-slate-500 italic bg-slate-50 rounded-2xl border border-slate-300 flex flex-col items-center justify-center gap-3">
+                  <p>Nenhum pedido encontrado para os filtros ativos do calendário neste dia.</p>
+                  {onOpenLinkModal && currentUser.role !== 'VIEWER' && (
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onOpenLinkModal();
+                      }}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition-all cursor-pointer not-italic"
+                    >
+                      <Link2 className="w-3.5 h-3.5" />
+                      <span>+ Vincular Pedidos a este Dia</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>
