@@ -25,7 +25,8 @@ import {
   Square,
   MinusSquare,
   Sparkles,
-  ListChecks
+  ListChecks,
+  FileText
 } from 'lucide-react';
 
 interface LinkOrderModalProps {
@@ -280,7 +281,7 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
         data_limite_solicitacao: dataSolicitacao || targetDeliveryDate,
         data_limite_aprovacao: dataAprovacao || targetDeliveryDate,
         data_separacao: dataInicioSeparacao || targetDeliveryDate,
-        data_expedicao: dataExpedicao || targetDeliveryDate,
+        data_expedicao: targetDeliveryDate, // Data de expedição é a mesma que entregue
         data_entrega: targetDeliveryDate,
         observacao: 'Vinculado em lote pelo calendário',
         ativo: true,
@@ -306,13 +307,13 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
           cronograma_id: scheduleIdToAssign,
           cronograma_vinculo: 'MANUAL',
           data_prevista_entrega: targetDeliveryDate,
+          data_expedicao: targetDeliveryDate, // Data de expedição é a mesma que entregue
           data_solicitacao: dataSolicitacao || ord.data_solicitacao || undefined,
           data_aprovacao: dataAprovacao || ord.data_aprovacao || undefined,
           data_inicio_separacao: dataInicioSeparacao || ord.data_inicio_separacao || undefined,
-          data_expedicao: dataExpedicao || ord.data_expedicao || undefined,
           validada_em: dataAprovacao ? `${dataAprovacao} 10:00` : ord.validada_em,
           separado_em: dataInicioSeparacao ? `${dataInicioSeparacao} 14:00` : ord.separado_em,
-          expedido_em: dataExpedicao ? `${dataExpedicao} 16:00` : ord.expedido_em,
+          expedido_em: `${targetDeliveryDate} 16:00`,
         };
       },
       currentUser,
@@ -709,8 +710,11 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                         if (found.data_limite_solicitacao) setDataSolicitacao(found.data_limite_solicitacao);
                         if (found.data_limite_aprovacao) setDataAprovacao(found.data_limite_aprovacao);
                         if (found.data_separacao) setDataInicioSeparacao(found.data_separacao);
-                        if (found.data_expedicao) setDataExpedicao(found.data_expedicao);
-                        if (found.data_entrega) setDataEntrega(found.data_entrega);
+                        const finalDelivery = found.data_entrega || found.data_expedicao;
+                        if (finalDelivery) {
+                          setDataEntrega(finalDelivery);
+                          setDataExpedicao(finalDelivery);
+                        }
                       }
                     }
                   }}
@@ -721,77 +725,93 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
                   <option value="NONE">Vincular diretamente ao dia {dayNumber}/{monthNumber === 9 ? '09' : '10'} no Calendário</option>
                   {availableSchedules.map(s => (
                     <option key={s.id} value={s.id}>
-                      {s.unidade} — {s.programa} ({s.competencia}) [Entrega: {s.data_entrega}]
+                      {s.unidade} — {s.programa} ({s.competencia}) [Entrega/Expedição: {s.data_entrega || s.data_expedicao}]
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* 5 Operational Phase Dates */}
-              <div className="pt-2.5 border-t border-blue-200/80 space-y-2.5">
-                <span className="font-bold text-slate-800 block text-xs">
-                  Datas das Etapas Operacionais dos Pedidos Selecionados:
-                </span>
-
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-                  <div>
-                    <label className="text-[10px] text-slate-600 block mb-0.5 font-medium">
-                      1. Solicitação:
-                    </label>
-                    <input
-                      type="date"
-                      value={dataSolicitacao}
-                      onChange={(e) => setDataSolicitacao(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
-                    />
+              {/* Datas das Etapas e Controle Informativo */}
+              <div className="pt-2.5 border-t border-blue-200/80 space-y-3">
+                {/* 1. Etapas Operacionais Agendadas no Calendário */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800 block text-xs">
+                      Etapas Agendadas no Calendário:
+                    </span>
+                    <span className="text-[10px] text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full font-bold border border-emerald-200">
+                      Data de expedição é a mesma que entregue (1 única data)
+                    </span>
                   </div>
 
-                  <div>
-                    <label className="text-[10px] text-slate-600 block mb-0.5 font-medium">
-                      2. Aprovação:
-                    </label>
-                    <input
-                      type="date"
-                      value={dataAprovacao}
-                      onChange={(e) => setDataAprovacao(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] font-bold text-emerald-900 block mb-0.5 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                        <span>Data de Entrega / Expedição:</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={dataEntrega}
+                        onChange={(e) => {
+                          setDataEntrega(e.target.value);
+                          setDataExpedicao(e.target.value);
+                        }}
+                        className="w-full text-xs font-mono p-2 bg-emerald-50 border border-emerald-300 text-emerald-950 font-bold rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] text-slate-600 block mb-0.5 font-medium flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                        <span>Início de Separação (Opcional):</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={dataInicioSeparacao}
+                        onChange={(e) => setDataInicioSeparacao(e.target.value)}
+                        className="w-full text-xs font-mono p-2 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Controle de Informação: Solicitação e Aprovação (Informativo, não gera tag no calendário) */}
+                <div className="pt-2 border-t border-slate-200 space-y-1.5 bg-slate-50/80 p-2.5 rounded-xl border border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+                      <FileText className="w-3 h-3 text-slate-500" />
+                      <span>Controle de Informação (Registro do Pedido):</span>
+                    </span>
+                    <span className="text-[9px] text-slate-500 italic">
+                      Controle interno · Não sinalizado no calendário como tag
+                    </span>
                   </div>
 
-                  <div>
-                    <label className="text-[10px] text-slate-600 block mb-0.5 font-medium">
-                      3. Separação:
-                    </label>
-                    <input
-                      type="date"
-                      value={dataInicioSeparacao}
-                      onChange={(e) => setDataInicioSeparacao(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
-                    />
-                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">
+                        Data de Solicitação:
+                      </label>
+                      <input
+                        type="date"
+                        value={dataSolicitacao}
+                        onChange={(e) => setDataSolicitacao(e.target.value)}
+                        className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-lg text-slate-700"
+                      />
+                    </div>
 
-                  <div>
-                    <label className="text-[10px] text-slate-600 block mb-0.5 font-medium">
-                      4. Expedição:
-                    </label>
-                    <input
-                      type="date"
-                      value={dataExpedicao}
-                      onChange={(e) => setDataExpedicao(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] font-bold text-blue-900 block mb-0.5">
-                      5. Entrega:
-                    </label>
-                    <input
-                      type="date"
-                      value={dataEntrega}
-                      onChange={(e) => setDataEntrega(e.target.value)}
-                      className="w-full text-xs font-mono p-1.5 bg-blue-100 border border-blue-400 text-blue-950 font-bold rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    />
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">
+                        Data de Aprovação:
+                      </label>
+                      <input
+                        type="date"
+                        value={dataAprovacao}
+                        onChange={(e) => setDataAprovacao(e.target.value)}
+                        className="w-full text-xs font-mono p-1.5 bg-white border border-slate-300 rounded-lg text-slate-700"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

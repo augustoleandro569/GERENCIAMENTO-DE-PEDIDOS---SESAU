@@ -34,7 +34,7 @@ import {
 import { DayOrdersModal } from './DayOrdersModal';
 import { MultiSelect } from '../common/MultiSelect';
 
-export type StageDateFilter = 'TODOS' | 'ENTREGA' | 'SEPARACAO' | 'EXPEDICAO' | 'APROVACAO' | 'SOLICITACAO';
+export type StageDateFilter = 'TODOS' | 'ENTREGA' | 'SEPARACAO';
 
 interface UnifiedCalendarProps {
   onSelectOrder?: (order: Order) => void;
@@ -237,9 +237,6 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
   interface DayMapping {
     entregas: Order[];
     separacoes: Order[];
-    expedicoes: Order[];
-    aprovacoes: Order[];
-    solicitacoes: Order[];
   }
 
   const calendarDayMap = useMemo(() => {
@@ -249,23 +246,20 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       map.set(d, {
         entregas: [],
         separacoes: [],
-        expedicoes: [],
-        aprovacoes: [],
-        solicitacoes: [],
       });
     }
 
     // Map Orders to their respective dates (explicit or schedule-linked)
     filteredOrders.forEach(ord => {
       // Ignora pedidos sem vínculo ativo
-      if (ord.cronograma_vinculo === 'NENHUM' && !ord.cronograma_id && !ord.data_prevista_entrega) {
+      if (ord.cronograma_vinculo === 'NENHUM' && !ord.cronograma_id && !ord.data_prevista_entrega && !ord.data_expedicao && !ord.data_inicio_separacao) {
         return;
       }
 
       const sch = ord.cronograma_id ? schedulesMap.get(ord.cronograma_id) : null;
 
-      // Data de Entrega
-      const dEntrega = extractDayForMonth(ord.data_prevista_entrega || sch?.data_entrega);
+      // Data de Entrega / Expedição: data de expedição é a mesma que entregue, unificada em 1 só etapa
+      const dEntrega = extractDayForMonth(ord.data_prevista_entrega || ord.data_expedicao || sch?.data_entrega || sch?.data_expedicao);
       if (dEntrega && map.has(dEntrega)) {
         map.get(dEntrega)!.entregas.push(ord);
       }
@@ -274,28 +268,6 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
       const dSep = extractDayForMonth(ord.data_inicio_separacao || sch?.data_separacao);
       if (dSep && map.has(dSep)) {
         map.get(dSep)!.separacoes.push(ord);
-      }
-
-      // Expedição
-      const dExp = extractDayForMonth(ord.data_expedicao || sch?.data_expedicao);
-      if (dExp && map.has(dExp)) {
-        map.get(dExp)!.expedicoes.push(ord);
-      }
-
-      // Aprovação (apenas se vinculado a cronograma ou com data explícita)
-      if (ord.cronograma_id || ord.data_aprovacao) {
-        const dAprov = extractDayForMonth(ord.data_aprovacao || sch?.data_limite_aprovacao);
-        if (dAprov && map.has(dAprov)) {
-          map.get(dAprov)!.aprovacoes.push(ord);
-        }
-      }
-
-      // Solicitação (apenas para pedidos vinculados a cronograma ativo)
-      if (ord.cronograma_id && sch?.data_limite_solicitacao) {
-        const dSol = extractDayForMonth(sch.data_limite_solicitacao);
-        if (dSol && map.has(dSol)) {
-          map.get(dSol)!.solicitacoes.push(ord);
-        }
       }
     });
 
@@ -307,24 +279,16 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
     ? (calendarDayMap.get(selectedDay) || {
         entregas: [],
         separacoes: [],
-        expedicoes: [],
-        aprovacoes: [],
-        solicitacoes: [],
       })
     : {
         entregas: [],
         separacoes: [],
-        expedicoes: [],
-        aprovacoes: [],
-        solicitacoes: [],
       };
 
-  const totalDayOrders = 
-    selectedDayData.entregas.length +
-    selectedDayData.separacoes.length +
-    selectedDayData.expedicoes.length +
-    selectedDayData.aprovacoes.length +
-    (selectedStages.includes('SOLICITACAO') ? selectedDayData.solicitacoes.length : 0);
+  const totalDayOrders = Array.from(new Set([
+    ...selectedDayData.entregas.map(o => o.id),
+    ...selectedDayData.separacoes.map(o => o.id),
+  ])).length;
 
   const totalDayEvents = totalDayOrders;
 
@@ -451,19 +415,15 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
             </div>
           )}
 
-          {/* Multi-Select Etapas */}
+          {/* Multi-Select Etapas: Somente Entregas */}
           <MultiSelect
             options={[
-              { id: 'ENTREGA', label: '🟢 Entregas' },
-              { id: 'SEPARACAO', label: '🟣 Separações' },
-              { id: 'EXPEDICAO', label: '🟠 Expedições' },
-              { id: 'APROVACAO', label: '🟡 Aprovações' },
-              { id: 'SOLICITACAO', label: '🔵 Solicitações' },
+              { id: 'ENTREGA', label: '🟢 Entregas Agendadas' },
             ]}
             selected={selectedStages}
             onChange={(next) => setSelectedStages(next)}
-            placeholder="Todas as Etapas"
-            className="flex-1 sm:flex-initial sm:w-40"
+            placeholder="Etapa: Entregas"
+            className="flex-1 sm:flex-initial sm:w-44"
           />
 
           {/* Multi-Select Tipos de Pedido */}
@@ -555,22 +515,15 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
               const data = calendarDayMap.get(day) || {
                 entregas: [],
                 separacoes: [],
-                expedicoes: [],
-                aprovacoes: [],
-                solicitacoes: [],
               };
 
               const isSelected = selectedDay === day;
               const isToday = currentMonth === todayRef.month && day === todayRef.day;
 
               const hasEntregas = data.entregas.length > 0 && isStageActive('ENTREGA');
-              const hasSep = data.separacoes.length > 0 && isStageActive('SEPARACAO');
-              const hasExp = data.expedicoes.length > 0 && isStageActive('EXPEDICAO');
-              const hasAprov = data.aprovacoes.length > 0 && isStageActive('APROVACAO');
-              const hasSol = data.solicitacoes.length > 0 && isStageActive('SOLICITACAO');
 
-              // Only actual orders count for cell active state
-              const hasAny = hasEntregas || hasSep || hasExp || hasAprov || hasSol;
+              // Only actual deliveries count for cell active state and tags
+              const hasAny = hasEntregas;
 
               return (
                 <div
@@ -637,45 +590,12 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                     </div>
                   </div>
 
-                  {/* Stage Badges for Day - Soft Rounded Pills */}
+                  {/* Tag Somente de Entrega (expedição unificada em 1 só etapa de entrega) */}
                   <div className="space-y-1 overflow-hidden mt-1">
-                    {/* Entregas */}
                     {hasEntregas && (
                       <div className="text-[9px] font-mono px-1.5 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200/80 truncate flex items-center gap-1 font-bold shadow-2xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                         <span>{data.entregas.length} entrega{data.entregas.length > 1 ? 's' : ''}</span>
-                      </div>
-                    )}
-
-                    {/* Separações */}
-                    {hasSep && (
-                      <div className="text-[9px] font-mono px-1.5 py-0.5 rounded-lg bg-purple-50 text-purple-800 border border-purple-200/80 truncate flex items-center gap-1 font-bold shadow-2xs">
-                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0" />
-                        <span>{data.separacoes.length} separação</span>
-                      </div>
-                    )}
-
-                    {/* Expedições */}
-                    {hasExp && (
-                      <div className="text-[9px] font-mono px-1.5 py-0.5 rounded-lg bg-cyan-50 text-cyan-800 border border-cyan-200/80 truncate flex items-center gap-1 font-bold shadow-2xs">
-                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 shrink-0" />
-                        <span>{data.expedicoes.length} expedição</span>
-                      </div>
-                    )}
-
-                    {/* Aprovações */}
-                    {hasAprov && (
-                      <div className="text-[9px] font-mono px-1.5 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200/80 truncate flex items-center gap-1 font-bold shadow-2xs">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
-                        <span>{data.aprovacoes.length} aprovação</span>
-                      </div>
-                    )}
-
-                    {/* Solicitações */}
-                    {hasSol && (
-                      <div className="text-[9px] font-mono px-1.5 py-0.5 rounded-lg bg-blue-50 text-blue-800 border border-blue-200/80 truncate flex items-center gap-1 font-bold shadow-2xs">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
-                        <span>{data.solicitacoes.length} solicitação</span>
                       </div>
                     )}
                   </div>
@@ -775,12 +695,12 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                   </button>
                 )}
 
-                {/* Section 1: Entregas Agendadas */}
+                {/* Section: Entregas Agendadas */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs font-bold text-slate-800 border-b border-slate-100 pb-1">
                     <span className="flex items-center gap-1.5 text-emerald-800">
                       <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span>1. Entregas Agendadas ({selectedDayData.entregas.length})</span>
+                      <span>Entregas Agendadas ({selectedDayData.entregas.length})</span>
                     </span>
                   </div>
 
@@ -866,12 +786,12 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                   )}
                 </div>
 
-                {/* Section 2: Início de Separação */}
+                {/* Início de Separação (Acompanhamento interno) */}
                 <div className="space-y-2 pt-2 border-t border-slate-100">
                   <div className="flex items-center justify-between text-xs font-bold text-slate-800 border-b border-slate-100 pb-1">
                     <span className="flex items-center gap-1.5 text-purple-800">
                       <span className="w-2 h-2 rounded-full bg-purple-500" />
-                      <span>2. Início de Separação ({selectedDayData.separacoes.length})</span>
+                      <span>Separações no Dia ({selectedDayData.separacoes.length})</span>
                     </span>
                   </div>
 
@@ -919,86 +839,12 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
                   )}
                 </div>
 
-                {/* Section 3: Expedições */}
-                <div className="space-y-2 pt-2 border-t border-slate-100">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-800 border-b border-slate-100 pb-1">
-                    <span className="flex items-center gap-1.5 text-cyan-800">
-                      <span className="w-2 h-2 rounded-full bg-cyan-500" />
-                      <span>3. Expedições ({selectedDayData.expedicoes.length})</span>
-                    </span>
-                  </div>
-
-                  {selectedDayData.expedicoes.length > 0 ? (
-                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {selectedDayData.expedicoes.map((ord, idx) => (
-                        <div
-                          key={`${ord.id}-${idx}`}
-                          className="p-2 bg-cyan-50/40 rounded-xl border border-cyan-200/70 flex items-center justify-between text-xs hover:bg-cyan-100/50 hover:shadow-2xs transition-all"
-                        >
-                          <div 
-                            onClick={() => onSelectOrder?.(ord)}
-                            className="cursor-pointer"
-                          >
-                            <span className="font-mono text-[11px] text-cyan-950 font-bold">{ord.codigo}</span>
-                            <span className="text-slate-600 ml-1">· {ord.unidade}</span>
-                            <span className="text-[10px] text-slate-500 font-mono block">{ord.status_operacional}</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {onSelectOrder && (
-                              <button
-                                onClick={() => onSelectOrder(ord)}
-                                className="p-1 text-slate-400 hover:text-blue-600 rounded-full hover:bg-white"
-                                title="Ver detalhes"
-                              >
-                                <ExternalLink className="w-3 h-3" />
-                              </button>
-                            )}
-                            <button
-                              onClick={async () => {
-                                await unlinkOrder(ord.id, currentUser, `Desvinculado do dia ${selectedDay}/${monthStr}/2026 no calendário`);
-                                showToast('success', `${ord.codigo} desvinculado`, 'Pedido foi desvinculado.');
-                              }}
-                              className="p-1 text-slate-400 hover:text-rose-600 rounded-full hover:bg-rose-50 transition-colors cursor-pointer"
-                              title="Desvincular"
-                            >
-                              <Unlink className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-[11px] text-slate-400 italic">Nenhuma expedição nesta data.</p>
-                  )}
-                </div>
-
-                {/* Section 4: Aprovações & Solicitações */}
-                {(selectedDayData.aprovacoes.length > 0 || selectedDayData.solicitacoes.length > 0) && (
-                  <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
-                    <span className="font-bold text-slate-700 block text-[11px]">
-                      4. Aprovações & Solicitações:
-                    </span>
-                    <div className="space-y-1 text-[11px] text-slate-600">
-                      {selectedDayData.aprovacoes.length > 0 && (
-                        <p className="flex items-center justify-between bg-amber-50/60 p-2 rounded-xl border border-amber-200/70 font-semibold text-amber-900">
-                          <span>🟡 {selectedDayData.aprovacoes.length} aprovações realizadas</span>
-                        </p>
-                      )}
-                      {selectedDayData.solicitacoes.length > 0 && (
-                        <p className="flex items-center justify-between bg-blue-50/60 p-2 rounded-xl border border-blue-200/70 font-semibold text-blue-900">
-                          <span>🔵 {selectedDayData.solicitacoes.length} solicitações emitidas</span>
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
                 {/* Empty State when no orders are scheduled on this day */}
                 {totalDayOrders === 0 && (
                   <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80 text-center space-y-1.5 my-2">
                     <p className="text-xs font-semibold text-slate-700">Nenhum pedido agendado para este dia</p>
                     <p className="text-[11px] text-slate-500 leading-snug">
-                      Não há entregas, separações ou expedições programadas nesta data.
+                      Não há entregas ou separações programadas nesta data.
                     </p>
                   </div>
                 )}

@@ -511,6 +511,7 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
 
       await generateConsolidatedPdf(reportEl, {
         filename,
+        orientation: 'landscape',
         onProgress: (msg, percent) => {
           setPdfProgress(`${percent}%`);
         }
@@ -558,12 +559,12 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
               onClick={handleExportConsolidatedPDF}
               disabled={isGeneratingPdf || filteredOrders.length === 0}
               className="inline-flex items-center gap-2 px-4 py-2 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 active:scale-95 rounded-xl shadow-xs transition-all cursor-pointer ring-2 ring-blue-500/20"
-              title="Gerar e baixar o arquivo oficial consolidado em PDF com logotipo da Linus Soluções"
+              title="Gerar e baixar o relatório executivo consolidado em PDF (formato paisagem A4)"
             >
               {isGeneratingPdf ? (
                 <>
                   <RotateCcw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Gerando PDF ({pdfProgress || '...'})</span>
+                  <span>Gerando PDF Paisagem ({pdfProgress || '...'})</span>
                 </>
               ) : (
                 <>

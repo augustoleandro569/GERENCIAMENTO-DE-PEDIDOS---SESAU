@@ -82,6 +82,11 @@
 
 /* Print Styles for Consolidated Executive Reports */
 @media print {
+  @page {
+    size: A4 landscape;
+    margin: 4mm;
+  }
+
   body {
     background-color: #ffffff !important;
     color: #000000 !important;

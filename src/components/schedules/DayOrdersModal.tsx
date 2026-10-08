@@ -143,9 +143,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
   const dayCategorized = useMemo(() => {
     const entregas: Order[] = [];
     const separacoes: Order[] = [];
-    const expedicoes: Order[] = [];
-    const aprovacoes: Order[] = [];
-    const solicitacoes: Order[] = [];
 
     orders.forEach(o => {
       // Pedidos desvinculados sem cronograma e sem datas agendadas não pertencem ao dia
@@ -168,8 +165,8 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
 
       const sch = o.cronograma_id ? schedulesMap.get(o.cronograma_id) : undefined;
 
-      // 1. Entrega: explicit delivery or schedule delivery
-      const dEntrega = o.data_prevista_entrega || sch?.data_entrega;
+      // 1. Entrega / Expedição: unificada em 1 só etapa (expedição é a mesma que entrega)
+      const dEntrega = o.data_prevista_entrega || o.data_expedicao || sch?.data_entrega || sch?.data_expedicao;
       if (matchesDay(dEntrega)) {
         entregas.push(o);
       }
@@ -179,33 +176,11 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       if (matchesDay(dSep)) {
         separacoes.push(o);
       }
-
-      // 3. Expedição: explicit expedition or schedule expedition
-      const dExp = o.data_expedicao || sch?.data_expedicao;
-      if (matchesDay(dExp)) {
-        expedicoes.push(o);
-      }
-
-      // 4. Aprovação: se vinculado ou com data de aprovação
-      if (o.cronograma_id || o.data_aprovacao || o.cronograma_vinculo === 'MANUAL') {
-        const dAprov = o.data_aprovacao || sch?.data_limite_aprovacao;
-        if (matchesDay(dAprov)) {
-          aprovacoes.push(o);
-        }
-      }
-
-      // 5. Solicitação: se vinculado a cronograma ativo ou com data de solicitação
-      if ((o.cronograma_id || o.cronograma_vinculo === 'MANUAL') && (o.data_solicitacao || sch?.data_limite_solicitacao)) {
-        const dSolic = o.data_solicitacao || sch?.data_limite_solicitacao;
-        if (matchesDay(dSolic)) {
-          solicitacoes.push(o);
-        }
-      }
     });
 
     // Conjunto unificado de todos os pedidos ativos do dia
     const allUniqueMap = new Map<string, Order>();
-    [...entregas, ...separacoes, ...expedicoes, ...aprovacoes, ...solicitacoes].forEach(o => {
+    [...entregas, ...separacoes].forEach(o => {
       allUniqueMap.set(o.id, o);
     });
 
@@ -213,9 +188,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       todos: Array.from(allUniqueMap.values()),
       entregas,
       separacoes,
-      expedicoes,
-      aprovacoes,
-      solicitacoes,
     };
   }, [orders, schedules, dayNumber, monthStr, effectiveUnits, effectiveOrderTypes, schedulesMap]);
 
@@ -237,25 +209,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
         if (!orderSet.has(o.id)) { orderSet.add(o.id); list.push(o); }
       });
     }
-    if (effectiveStages.includes('EXPEDICAO')) {
-      dayCategorized.expedicoes.forEach(o => {
-        if (!orderSet.has(o.id)) { orderSet.add(o.id); list.push(o); }
-      });
-    }
-    if (effectiveStages.includes('APROVACAO')) {
-      dayCategorized.aprovacoes.forEach(o => {
-        if (!orderSet.has(o.id)) { orderSet.add(o.id); list.push(o); }
-      });
-    }
-    if (effectiveStages.includes('SOLICITACAO')) {
-      dayCategorized.solicitacoes.forEach(o => {
-        if (!orderSet.has(o.id)) { orderSet.add(o.id); list.push(o); }
-      });
-    }
-
-    if (effectiveStages.length === 1 && effectiveStages[0] === 'MARCOS') {
-      return [];
-    }
 
     return list;
   }, [effectiveStages, dayCategorized]);
@@ -268,9 +221,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
     const mapLabels: Record<string, string> = {
       ENTREGA: 'Entregas',
       SEPARACAO: 'Separações',
-      EXPEDICAO: 'Expedições',
-      APROVACAO: 'Aprovações',
-      SOLICITACAO: 'Solicitações',
     };
     return effectiveStages.map(s => mapLabels[s] || s).join(', ');
   }, [effectiveStages]);
@@ -295,7 +245,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
       entregues,
       entregasCount: dayCategorized.entregas.length,
       separacoesCount: dayCategorized.separacoes.length,
-      expedicoesCount: dayCategorized.expedicoes.length,
     };
   }, [dayCategorized]);
 
@@ -399,7 +348,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-600 mt-0.5">
-                Controle detalhado de solicitações, entregas, expedições e separações agendadas
+                Controle operacional de entregas/expedições e separações agendadas (solicitação e aprovação para controle interno)
               </p>
             </div>
           </div>
@@ -459,7 +408,7 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
           <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-300 shadow-2xs">
             <span className="text-[10px] font-bold text-emerald-900 uppercase tracking-wider block flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-              <span>Entregas</span>
+              <span>Entregas / Expedição</span>
             </span>
             <div className="text-lg font-bold font-mono text-emerald-950 mt-0.5">
               {kpis.entregasCount}
@@ -482,19 +431,6 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
             </span>
           </div>
 
-          <div className="bg-cyan-50 p-3 rounded-2xl border border-cyan-300 shadow-2xs">
-            <span className="text-[10px] font-bold text-cyan-900 uppercase tracking-wider block flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-600" />
-              <span>Expedições</span>
-            </span>
-            <div className="text-lg font-bold font-mono text-cyan-950 mt-0.5">
-              {kpis.expedicoesCount}
-            </div>
-            <span className="text-[10px] text-cyan-800 font-medium">
-              Carga / transporte
-            </span>
-          </div>
-
           <div className="bg-rose-50 p-3 rounded-2xl border border-rose-300 shadow-2xs">
             <span className="text-[10px] font-bold text-rose-900 uppercase tracking-wider block flex items-center gap-1">
               <AlertCircle className="w-3 h-3 text-rose-600" />
@@ -508,15 +444,16 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
             </span>
           </div>
 
-          <div className="bg-slate-50 p-3 rounded-2xl border border-slate-300 shadow-2xs">
-            <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block">
-              Separação & Expedição
+          <div className="bg-emerald-50/70 p-3 rounded-2xl border border-emerald-300 shadow-2xs">
+            <span className="text-[10px] font-bold text-emerald-900 uppercase tracking-wider block flex items-center gap-1">
+              <Check className="w-3 h-3 text-emerald-600" />
+              <span>Status Entregue</span>
             </span>
-            <div className="text-lg font-bold font-mono text-purple-950 mt-0.5">
-              {kpis.separacoesCount + kpis.expedicoesCount}
+            <div className="text-lg font-bold font-mono text-emerald-950 mt-0.5">
+              {kpis.entregues}
             </div>
-            <span className="text-[10px] text-slate-600 font-medium">
-              Pedidos em processo
+            <span className="text-[10px] text-emerald-800 font-medium">
+              Pedidos finalizados
             </span>
           </div>
         </div>
@@ -628,11 +565,8 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                           const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
                           const { situation, label } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
 
-                          const isEntregaHoje = matchesDay(order.data_prevista_entrega || sch?.data_entrega);
+                          const isEntregaHoje = matchesDay(order.data_prevista_entrega || order.data_expedicao || sch?.data_entrega || sch?.data_expedicao);
                           const isSepHoje = matchesDay(order.data_inicio_separacao || sch?.data_separacao);
-                          const isExpHoje = matchesDay(order.data_expedicao || sch?.data_expedicao);
-                          const isAprovHoje = matchesDay(order.data_aprovacao || sch?.data_limite_aprovacao);
-                          const isSolHoje = matchesDay(sch?.data_limite_solicitacao);
 
                           const isOrderLinked = Boolean(order.cronograma_id || order.data_prevista_entrega);
 
@@ -734,35 +668,17 @@ export const DayOrdersModal: React.FC<DayOrdersModalProps> = ({
                                 )}
                               </td>
 
-                              {/* Stage on Day */}
+                              {/* Stage on Day - Somente tag de entrega */}
                               <td className="py-2.5 px-3 whitespace-nowrap">
                                 <div className="flex flex-wrap gap-1 text-[10px] font-bold">
-                                  {isEntregaHoje && (
+                                  {isEntregaHoje ? (
                                     <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1">
                                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
                                       <span>Entrega Agendada</span>
                                     </span>
-                                  )}
-                                  {isSepHoje && (
-                                    <span className="px-2 py-0.5 rounded-lg bg-purple-100 text-purple-900 border border-purple-300 flex items-center gap-1">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-purple-600" />
-                                      <span>Separação</span>
-                                    </span>
-                                  )}
-                                  {isExpHoje && (
-                                    <span className="px-2 py-0.5 rounded-lg bg-cyan-100 text-cyan-900 border border-cyan-300 flex items-center gap-1">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-600" />
-                                      <span>Expedição</span>
-                                    </span>
-                                  )}
-                                  {isAprovHoje && !isEntregaHoje && !isSepHoje && (
-                                    <span className="px-2 py-0.5 rounded-lg bg-amber-100 text-amber-900 border border-amber-300">
-                                      Aprovação
-                                    </span>
-                                  )}
-                                  {isSolHoje && !isEntregaHoje && !isSepHoje && !isExpHoje && !isAprovHoje && (
-                                    <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-900 border border-blue-300">
-                                      Solicitação
+                                  ) : (
+                                    <span className="text-slate-400 font-normal text-[10px]">
+                                      -
                                     </span>
                                   )}
                                 </div>

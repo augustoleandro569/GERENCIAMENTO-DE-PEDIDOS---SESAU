@@ -45,14 +45,13 @@ import {
   Link2
 } from 'lucide-react';
 
-export type ScheduleDateSortField = 'data_entrega' | 'data_expedicao' | 'data_separacao' | 'data_limite_aprovacao' | 'data_limite_solicitacao';
+export type ScheduleDateSortField = 'data_entrega' | 'data_separacao' | 'data_limite_aprovacao' | 'data_limite_solicitacao';
 
 export const DATE_SORT_OPTIONS: { id: ScheduleDateSortField; label: string; shortLabel: string }[] = [
-  { id: 'data_entrega', label: '🚚 5. Entrega no Hospital (Padrão)', shortLabel: 'Entrega' },
-  { id: 'data_expedicao', label: '🚛 4. Expedição / Trânsito', shortLabel: 'Expedição' },
-  { id: 'data_separacao', label: '📦 3. Início da Separação', shortLabel: 'Separação' },
-  { id: 'data_limite_aprovacao', label: '✅ 2. Limite de Aprovação', shortLabel: 'Aprovação' },
-  { id: 'data_limite_solicitacao', label: '📝 1. Limite de Solicitação', shortLabel: 'Solicitação' },
+  { id: 'data_entrega', label: '🚚 Entrega / Expedição no Hospital (Padrão)', shortLabel: 'Entrega/Expedição' },
+  { id: 'data_separacao', label: '📦 Início da Separação', shortLabel: 'Separação' },
+  { id: 'data_limite_aprovacao', label: '✅ Limite Aprovação (Controle)', shortLabel: 'Aprovação' },
+  { id: 'data_limite_solicitacao', label: '📝 Limite Solicitação (Controle)', shortLabel: 'Solicitação' },
 ];
 
 export type ScheduleDateFilterPreset = 'TODOS' | 'HOJE' | 'PROXIMOS_7' | 'PROXIMOS_15' | 'ESTE_MES' | 'PROXIMO_MES';
@@ -174,7 +173,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
       };
 
       return {
-        expedicao: subDays(delivery, 1),
+        expedicao: subDays(delivery, 0), // Data de expedição é a mesma que entregue
         separacao: subDays(delivery, 2),
         limiteAprovacao: subDays(delivery, 3),
         limiteSolicitacao: subDays(delivery, 5),
@@ -1066,8 +1065,6 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                           <span className={`px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold border inline-flex items-center gap-1 ${
                             dateSortField === 'data_entrega'
                               ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                              : dateSortField === 'data_expedicao'
-                              ? 'bg-cyan-50 text-cyan-800 border-cyan-200'
                               : dateSortField === 'data_separacao'
                               ? 'bg-purple-50 text-purple-800 border-purple-200'
                               : dateSortField === 'data_limite_aprovacao'
@@ -1296,10 +1293,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                         className={`py-3 px-3 text-center cursor-pointer transition-colors select-none group ${
                           dateSortField === 'data_limite_solicitacao' ? 'bg-blue-100/80 text-blue-900 font-extrabold' : 'hover:bg-slate-100 text-slate-600'
                         }`}
-                        title="Clique para organizar por Limite de Solicitação"
+                        title="Clique para organizar por Limite de Solicitação (Controle de Informação)"
                       >
                         <div className="inline-flex items-center justify-center gap-1 w-full">
-                          <span>1. Limite Solicitação</span>
+                          <span>1. Limite Solicitação (Controle)</span>
                           {dateSortField === 'data_limite_solicitacao' ? (
                             dateSortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-700" /> : <ArrowDown className="w-3 h-3 text-blue-700" />
                           ) : (
@@ -1312,10 +1309,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                         className={`py-3 px-3 text-center cursor-pointer transition-colors select-none group ${
                           dateSortField === 'data_limite_aprovacao' ? 'bg-blue-100/80 text-blue-900 font-extrabold' : 'hover:bg-slate-100 text-slate-600'
                         }`}
-                        title="Clique para organizar por Limite de Aprovação"
+                        title="Clique para organizar por Limite de Aprovação (Controle de Informação)"
                       >
                         <div className="inline-flex items-center justify-center gap-1 w-full">
-                          <span>2. Limite Aprovação</span>
+                          <span>2. Limite Aprovação (Controle)</span>
                           {dateSortField === 'data_limite_aprovacao' ? (
                             dateSortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-700" /> : <ArrowDown className="w-3 h-3 text-blue-700" />
                           ) : (
@@ -1340,30 +1337,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                         </div>
                       </th>
                       <th 
-                        onClick={() => handleToggleDateSort('data_expedicao')}
-                        className={`py-3 px-3 text-center cursor-pointer transition-colors select-none group ${
-                          dateSortField === 'data_expedicao' ? 'bg-blue-100/80 text-blue-900 font-extrabold' : 'hover:bg-slate-100 text-slate-600'
-                        }`}
-                        title="Clique para organizar por Expedição / Trânsito"
-                      >
-                        <div className="inline-flex items-center justify-center gap-1 w-full">
-                          <span>4. Expedição</span>
-                          {dateSortField === 'data_expedicao' ? (
-                            dateSortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-blue-700" /> : <ArrowDown className="w-3 h-3 text-blue-700" />
-                          ) : (
-                            <ArrowUpDown className="w-2.5 h-2.5 text-slate-300 opacity-0 group-hover:opacity-100" />
-                          )}
-                        </div>
-                      </th>
-                      <th 
                         onClick={() => handleToggleDateSort('data_entrega')}
                         className={`py-3 px-3 text-center cursor-pointer transition-colors select-none group ${
                           dateSortField === 'data_entrega' ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-slate-100 text-emerald-800 font-bold'
                         }`}
-                        title="Clique para organizar por Entrega no Hospital"
+                        title="Clique para organizar por Entrega / Expedição no Hospital (Expedição é a mesma que entregue)"
                       >
                         <div className="inline-flex items-center justify-center gap-1 w-full">
-                          <span>5. Entrega Hospital</span>
+                          <span>4. Entrega / Expedição</span>
                           {dateSortField === 'data_entrega' ? (
                             dateSortOrder === 'asc' ? <ArrowUp className="w-3 h-3 text-emerald-700" /> : <ArrowDown className="w-3 h-3 text-emerald-700" />
                           ) : (
@@ -1436,24 +1417,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                           {formatShortDate(sch.data_separacao)}
                         </button>
                       </td>
-                      <td className={`py-3 px-3 text-center font-mono font-medium ${dateSortField === 'data_expedicao' ? 'bg-blue-50/60 font-bold text-blue-950' : 'text-slate-700'}`}>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenDayFromDate(sch.data_expedicao, sch.tipo_pedido)}
-                          className="hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors"
-                          title={`Clique para abrir pedidos vinculados a ${formatShortDate(sch.data_expedicao)}`}
-                        >
-                          {formatShortDate(sch.data_expedicao)}
-                        </button>
-                      </td>
                       <td className={`py-3 px-3 text-center font-mono font-bold ${dateSortField === 'data_entrega' ? 'bg-emerald-100/60 text-emerald-950 font-black' : 'text-emerald-700'}`}>
                         <button
                           type="button"
-                          onClick={() => handleOpenDayFromDate(sch.data_entrega, sch.tipo_pedido)}
+                          onClick={() => handleOpenDayFromDate(sch.data_entrega || sch.data_expedicao, sch.tipo_pedido)}
                           className="hover:text-emerald-900 hover:bg-emerald-50 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors font-bold"
-                          title={`Clique para abrir pedidos vinculados à entrega em ${formatShortDate(sch.data_entrega)}`}
+                          title={`Clique para abrir pedidos vinculados à entrega/expedição em ${formatShortDate(sch.data_entrega || sch.data_expedicao)}`}
                         >
-                          {formatShortDate(sch.data_entrega)}
+                          {formatShortDate(sch.data_entrega || sch.data_expedicao)}
                         </button>
                       </td>
 
@@ -1857,11 +1828,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                 </div>
               </div>
 
-              {/* 3. DATAS LIMITE DO CICLO */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2.5">
+              {/* 3. DATAS DO CICLO */}
+              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-800 uppercase tracking-wider block text-[10px]">
-                    Mapeamento de Datas Limite do Ciclo (5 Etapas)
+                    Datas do Ciclo Operacional (Expedição é a mesma que entrega)
                   </span>
                   <button
                     type="button"
@@ -1872,7 +1843,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                         setSeparacaoPrevista(cycle.separacao);
                         setLimiteAprovacao(cycle.limiteAprovacao);
                         setLimiteSolicitacao(cycle.limiteSolicitacao);
-                        showToast('info', 'Prazos do Ciclo Calculados', 'Datas retroativas sugeridas com base na entrega.');
+                        showToast('info', 'Prazos do Ciclo Calculados', 'Datas retroativas sugeridas com base na entrega/expedição.');
                       }
                     }}
                     className="text-[10px] font-bold text-blue-700 bg-white px-2.5 py-0.5 rounded-full border border-blue-200 hover:bg-blue-50 cursor-pointer shadow-2xs"
@@ -1881,31 +1852,32 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">1. Limite Solicitação</label>
+                    <label className="text-[10px] font-bold text-emerald-900 block mb-0.5 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                      <span>Data de Entrega / Expedição no Hospital:</span>
+                    </label>
                     <input
                       type="date"
                       required
-                      value={limiteSolicitacao}
-                      onChange={(e) => setLimiteSolicitacao(e.target.value)}
-                      className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-mono font-semibold"
+                      value={entregaPrevista}
+                      onChange={(e) => {
+                        setEntregaPrevista(e.target.value);
+                        setExpedicaoPrevista(e.target.value);
+                      }}
+                      className="w-full p-2 bg-emerald-50 border border-emerald-300 text-emerald-950 font-bold rounded-xl text-xs font-mono"
                     />
+                    <span className="text-[9px] text-emerald-700 font-medium block mt-0.5">
+                      Expedição e entrega unificadas em 1 única data agendada
+                    </span>
                   </div>
 
                   <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">2. Limite Aprovação</label>
-                    <input
-                      type="date"
-                      required
-                      value={limiteAprovacao}
-                      onChange={(e) => setLimiteAprovacao(e.target.value)}
-                      className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-mono font-semibold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">3. Separação Prevista</label>
+                    <label className="text-[10px] text-slate-700 block mb-0.5 font-bold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                      <span>Início de Separação Prevista:</span>
+                    </label>
                     <input
                       type="date"
                       required
@@ -1914,27 +1886,37 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                       className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-mono font-semibold"
                     />
                   </div>
+                </div>
 
-                  <div>
-                    <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">4. Expedição Prevista</label>
-                    <input
-                      type="date"
-                      required
-                      value={expedicaoPrevista}
-                      onChange={(e) => setExpedicaoPrevista(e.target.value)}
-                      className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-mono font-semibold"
-                    />
+                {/* Controle de Informação: Solicitação e Aprovação (Informativo) */}
+                <div className="pt-2 border-t border-slate-200/80 bg-white p-2.5 rounded-xl border border-slate-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                      Controle de Informação (Informativo - Sem tag no calendário):
+                    </span>
                   </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">1. Limite Solicitação</label>
+                      <input
+                        type="date"
+                        required
+                        value={limiteSolicitacao}
+                        onChange={(e) => setLimiteSolicitacao(e.target.value)}
+                        className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono font-medium text-slate-700"
+                      />
+                    </div>
 
-                  <div className="sm:col-span-2">
-                    <label className="text-[10px] font-bold text-emerald-800 block mb-0.5">5. Entrega no Hospital (Data Agendada)</label>
-                    <input
-                      type="date"
-                      required
-                      value={entregaPrevista}
-                      onChange={(e) => setEntregaPrevista(e.target.value)}
-                      className="w-full p-2 bg-emerald-50 border border-emerald-300 text-emerald-950 font-bold rounded-xl text-xs font-mono"
-                    />
+                    <div>
+                      <label className="text-[10px] text-slate-500 block mb-0.5 font-medium">2. Limite Aprovação</label>
+                      <input
+                        type="date"
+                        required
+                        value={limiteAprovacao}
+                        onChange={(e) => setLimiteAprovacao(e.target.value)}
+                        className="w-full p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono font-medium text-slate-700"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
