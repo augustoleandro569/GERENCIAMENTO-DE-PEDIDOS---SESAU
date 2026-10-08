@@ -34,7 +34,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   onLogout,
   onNavigateToOrders,
 }) => {
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState('Admin569');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -317,12 +317,20 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
             {/* Credential summary notice */}
             <div className="mt-6 pt-4 border-t border-slate-100 text-center">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200/80 text-[11px] text-slate-600">
-                <span className="font-semibold text-slate-700">Usuário Autorizado:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setUsername('Admin569');
+                  setPassword('123456789');
+                }}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-blue-50 border border-slate-200/80 hover:border-blue-200 text-[11px] text-slate-600 hover:text-blue-700 transition-colors cursor-pointer group"
+                title="Clique para preencher credenciais autorizadas (Admin569 / 123456789)"
+              >
+                <span className="font-semibold text-slate-700 group-hover:text-blue-900">Usuário Autorizado:</span>
                 <code className="font-mono font-bold text-blue-700">Admin569</code>
                 <span className="text-slate-300">·</span>
-                <span className="text-slate-500">Acesso Restrito</span>
-              </div>
+                <span className="text-slate-500 group-hover:text-blue-600 font-medium">Preencher Acesso</span>
+              </button>
             </div>
           </div>
         </div>
