@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { dbSync } from '../../services/dbSync';
 import { 
   Mail, 
   Lock, 
@@ -78,10 +79,11 @@ export const PasswordRecoveryModal: React.FC<PasswordRecoveryModalProps> = ({
       return;
     }
 
-    // Save customized password in local storage
+    // Save customized password in local storage & cloud across devices
     try {
       localStorage.setItem('gp_custom_password', newPassword);
     } catch (_) {}
+    dbSync.saveSystemAuthPassword(newPassword).catch(err => console.warn('Cloud password save note:', err));
 
     onPasswordResetSuccess(newPassword);
     onClose();

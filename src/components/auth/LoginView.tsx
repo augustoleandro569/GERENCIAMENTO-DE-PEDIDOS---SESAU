@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SesauLogo, LinusLogo } from '../common/Logo';
 import { PasswordRecoveryModal } from './PasswordRecoveryModal';
+import { dbSync } from '../../services/dbSync';
 import { 
   User, 
   Lock, 
@@ -40,24 +41,43 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRecoveryModalOpen, setIsRecoveryModalOpen] = useState(false);
+  const [cloudPassword, setCloudPassword] = useState<string>('123456789');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    dbSync.getSystemAuthPassword().then(pass => {
+      if (pass) {
+        setCloudPassword(pass);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsSubmitting(true);
 
     const cleanUser = username.trim();
-    const currentValidPassword = (() => {
+    let currentValidPassword = cloudPassword;
+    try {
+      const fetched = await dbSync.getSystemAuthPassword();
+      if (fetched) currentValidPassword = fetched;
+    } catch (_) {}
+
+    const localPass = (() => {
       try {
-        return localStorage.getItem('gp_custom_password') || '123456789';
+        return localStorage.getItem('gp_custom_password');
       } catch (_) {
-        return '123456789';
+        return null;
       }
     })();
 
-    // Check credentials strictly against required single user: Admin569 / 123456789 (or customized password)
+    const isMatch = password === currentValidPassword || 
+                    password === '123456789' || 
+                    (localPass && password === localPass) ||
+                    password === cloudPassword;
+
     setTimeout(() => {
-      if (cleanUser.toLowerCase() === 'admin569' && (password === currentValidPassword || password === '123456789')) {
+      if (cleanUser.toLowerCase() === 'admin569' && isMatch) {
         onLoginSuccess({
           username: 'Admin569',
           role: 'ADMIN',
@@ -70,7 +90,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
         }
       }
       setIsSubmitting(false);
-    }, 250);
+    }, 200);
   };
 
   // If already authenticated, show the active session details with logout option
@@ -251,7 +271,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <input
                     type="text"
                     required
-                    autoFocus
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     placeholder="Digite o usuário (ex: Admin569)"
@@ -279,9 +298,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
+                    autoFocus
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Digite sua senha"
+                    placeholder="Digite sua senha de acesso"
                     className="w-full pl-9 pr-10 py-2.5 bg-slate-50/70 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition-all"
                   />
                   <button
@@ -321,15 +341,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 type="button"
                 onClick={() => {
                   setUsername('Admin569');
-                  setPassword('123456789');
                 }}
                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-blue-50 border border-slate-200/80 hover:border-blue-200 text-[11px] text-slate-600 hover:text-blue-700 transition-colors cursor-pointer group"
-                title="Clique para preencher credenciais autorizadas (Admin569 / 123456789)"
+                title="Clique para preencher o usuário autorizado (Admin569)"
               >
                 <span className="font-semibold text-slate-700 group-hover:text-blue-900">Usuário Autorizado:</span>
                 <code className="font-mono font-bold text-blue-700">Admin569</code>
                 <span className="text-slate-300">·</span>
-                <span className="text-slate-500 group-hover:text-blue-600 font-medium">Preencher Acesso</span>
+                <span className="text-slate-500 group-hover:text-blue-600 font-medium">Preencher Usuário</span>
               </button>
             </div>
           </div>

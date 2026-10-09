@@ -76,6 +76,9 @@ export default function App() {
 
     setActiveTab('pedidos');
     addToast('success', 'Acesso Autorizado', 'Bem-vindo ao SIGAH SESAU Alagoas, Admin569!');
+
+    // Pull latest data from cloud backend immediately upon login to ensure cross-device consistency
+    reloadStrictFromBackend().catch((err) => console.warn('Post-login sync note:', err));
   };
 
   const handleLogout = () => {
@@ -136,10 +139,28 @@ export default function App() {
     };
 
     window.addEventListener('app-toast', handleToastEvent);
+
+    // Auto-refresh from backend when user focuses tab/window to see changes made on other computers
+    const handleWindowFocus = () => {
+      if (isAuthenticated) {
+        reloadStrictFromBackend().catch(() => {});
+      }
+    };
+    window.addEventListener('focus', handleWindowFocus);
+
+    // Periodic sync check every 45s while active
+    const syncTimer = setInterval(() => {
+      if (isAuthenticated && document.visibilityState === 'visible') {
+        reloadStrictFromBackend().catch(() => {});
+      }
+    }, 45000);
+
     return () => {
       window.removeEventListener('app-toast', handleToastEvent);
+      window.removeEventListener('focus', handleWindowFocus);
+      clearInterval(syncTimer);
     };
-  }, []);
+  }, [isAuthenticated]);
 
   const handleNavigateFromDashboard = (preset?: { status?: string; tipo?: string; unidade?: string }) => {
     setOrdersFilterPreset(preset);

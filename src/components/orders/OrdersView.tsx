@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../hooks/useStore';
 import { Order, OrderStatus, Priority, RequestType, DeadlineSituation } from '../../types';
-import { calculateDeadlineSituation, formatDate, formatShortDate } from '../../utils/dateUtils';
+import { calculateDeadlineSituation, formatDate, formatShortDate, getSeparationAlertInfo } from '../../utils/dateUtils';
 import { StatusBadge, TypeTag, DeadlineBadge, PriorityBadge, InlineStatusSelect, ALL_STATUSES } from '../common/StatusBadge';
 import { showToast } from '../common/Toast';
 import { exportOrdersToSpreadsheet } from '../../utils/spreadsheet';
@@ -33,6 +33,9 @@ import {
   Package,
   Calendar,
   CalendarDays,
+  AlertTriangle,
+  Flame,
+  CheckCircle2
 } from 'lucide-react';
 
 interface OrdersViewProps {
@@ -164,11 +167,32 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     };
   }, [orders, schedulesMap, settings.horas_alerta_atencao]);
 
+  const [isAlertBannerVisible, setIsAlertBannerVisible] = useState(true);
+
+  // Separation alert map (calculates 5-business-day picking deadline for every order)
+  const separationAlertsMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getSeparationAlertInfo>>();
+    orders.forEach(o => {
+      const sch = o.cronograma_id ? schedulesMap.get(o.cronograma_id) : null;
+      map.set(o.id, getSeparationAlertInfo(o, sch));
+    });
+    return map;
+  }, [orders, schedulesMap]);
+
+  // Orders in Critical or Alert state (separation not started within 5 business days of delivery)
+  const separationAlertOrders = useMemo(() => {
+    return orders.filter(o => {
+      const alert = separationAlertsMap.get(o.id);
+      return alert && (alert.severity === 'CRITICO' || alert.severity === 'ALERTA');
+    });
+  }, [orders, separationAlertsMap]);
+
   // Filtered orders with Multi-Select support & Non-Unified Statuses
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
       const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
       const { situation } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
+      const separationAlert = separationAlertsMap.get(order.id);
 
       // Multi-quick-filter check: exact non-unified match
       if (selectedQuickFilters.length > 0) {
@@ -176,6 +200,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           if (qf === 'NO_PRAZO') return situation === 'Dentro do prazo' || situation === 'Concluído no prazo';
           if (qf === 'FORA_DO_PRAZO') return situation === 'Atrasado' || situation === 'Concluído com atraso';
           if (qf === 'EMERGENCIAL') return order.tipo === 'Emergencial' || order.tipo === 'Falta';
+          if (qf === 'ALERTA_SEPARACAO') return separationAlert && (separationAlert.severity === 'CRITICO' || separationAlert.severity === 'ALERTA');
           if (qf.startsWith('STATUS:')) {
             const targetStatus = qf.replace('STATUS:', '');
             if (targetStatus === 'Aprovada') {
@@ -486,6 +511,70 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
   return (
     <div className="space-y-4">
+      {/* INTERACTIVE SEPARATION ALERT BANNER (5 DIAS ÚTEIS ANTES DA ENTREGA) */}
+      {isAlertBannerVisible && separationAlertOrders.length > 0 && (
+        <div className="bg-gradient-to-r from-rose-500 via-rose-600 to-amber-600 text-white rounded-2xl p-4 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-start md:items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center shrink-0 border border-white/30 text-xl shadow-inner">
+              🚨
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-bold tracking-tight text-white flex items-center gap-1.5">
+                  Controle de Alerta de Separação: {separationAlertOrders.length} pedido{separationAlertOrders.length > 1 ? 's' : ''} em risco
+                </h3>
+                <span className="text-[10px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded-full bg-white/25 text-white border border-white/40">
+                  Prazo de 5 Dias Úteis
+                </span>
+              </div>
+              <p className="text-xs text-rose-100 font-medium mt-0.5 max-w-2xl leading-relaxed">
+                Estes pedidos estão a 5 dias úteis ou menos da data prevista de entrega e a separação ainda <strong>não foi iniciada</strong>. Inicie agora para evitar atrasos na expedição.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+            <button
+              onClick={() => {
+                setSelectedQuickFilters(prev => prev.includes('ALERTA_SEPARACAO') ? prev : [...prev, 'ALERTA_SEPARACAO']);
+                setCurrentPage(1);
+              }}
+              className="px-3 py-1.5 text-xs font-bold bg-white text-rose-700 hover:bg-rose-50 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+            >
+              Filtrar {separationAlertOrders.length} em Risco
+            </button>
+            {currentUser.role !== 'VIEWER' && (
+              <button
+                onClick={() => {
+                  const today = new Date().toISOString().split('T')[0];
+                  const timeNow = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                  separationAlertOrders.forEach(ord => {
+                    updateOperationalStatus(ord.id, 'Em Separação', currentUser, 'Separação iniciada em lote via Alerta de 5 dias úteis');
+                    updateOrder(ord.id, {
+                      separador: currentUser.nome,
+                      separado_em: `${today} ${timeNow}`,
+                      data_inicio_separacao: ord.data_inicio_separacao || today,
+                    }, currentUser, 'Início de separação em lote');
+                  });
+                  showToast('success', 'Separação Iniciada em Lote', `${separationAlertOrders.length} pedidos colocados em separação.`);
+                }}
+                className="px-3 py-1.5 text-xs font-bold bg-rose-950/40 hover:bg-rose-950/60 text-white border border-white/30 rounded-xl transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+                title="Iniciar separação de todos os pedidos com alerta pendente"
+              >
+                ⚡ Iniciar Todos
+              </button>
+            )}
+            <button
+              onClick={() => setIsAlertBannerVisible(false)}
+              className="p-1.5 text-rose-200 hover:text-white hover:bg-white/20 rounded-lg transition-colors cursor-pointer"
+              title="Ocultar banner de alerta"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Consolidated Top Control & Filtering Center - relative z-30 and overflow-visible so dropdowns overlay the table */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs relative z-30 divide-y divide-slate-100">
         {/* Tier 1: View Header, Mode Switcher & Export */}
@@ -772,6 +861,34 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             </span>
           </button>
 
+          {/* Interactive 5-Business-Day Separation Alert Pill */}
+          <button
+            onClick={() => {
+              setSelectedQuickFilters(prev => prev.includes('ALERTA_SEPARACAO') ? prev.filter(c => c !== 'ALERTA_SEPARACAO') : [...prev, 'ALERTA_SEPARACAO']);
+              setCurrentPage(1);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap shrink-0 text-xs border ${
+              selectedQuickFilters.includes('ALERTA_SEPARACAO')
+                ? 'bg-rose-700 text-white border-rose-800 shadow-xs'
+                : separationAlertOrders.length > 0
+                ? 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100 shadow-2xs'
+                : 'bg-slate-100 text-slate-700 border-transparent hover:bg-slate-200 hover:text-slate-900'
+            }`}
+            title="Filtrar pedidos a 5 dias úteis ou menos da entrega cuja separação ainda não foi iniciada"
+          >
+            <span className={separationAlertOrders.length > 0 ? 'text-xs' : ''}>🚨</span>
+            <span>Alerta Separação (5d úteis)</span>
+            <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+              selectedQuickFilters.includes('ALERTA_SEPARACAO')
+                ? 'bg-white/20 text-white'
+                : separationAlertOrders.length > 0
+                ? 'bg-rose-600 text-white animate-pulse'
+                : 'bg-slate-200 text-slate-600'
+            }`}>
+              {separationAlertOrders.length}
+            </span>
+          </button>
+
           <div className="h-4 w-px bg-slate-200 shrink-0 mx-1" />
 
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">
@@ -816,6 +933,79 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           })}
         </div>
       </div>
+
+      {/* INTERACTIVE TOP SEPARATION ALERT BANNER (5 DIAS ÚTEIS) */}
+      {separationAlertOrders.length > 0 && isAlertBannerVisible && (
+        <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border border-rose-300 rounded-2xl p-4 shadow-xs relative overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-2xl bg-rose-600 text-white flex items-center justify-center font-bold text-base shrink-0 shadow-xs animate-pulse">
+                🚨
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs font-black text-rose-950 uppercase tracking-wider">
+                    Alerta de Expedição: {separationAlertOrders.length} {separationAlertOrders.length === 1 ? 'Demanda com Separação Pendente' : 'Demandas com Separação Pendente'}
+                  </h4>
+                  <span className="text-[10px] font-bold bg-rose-200 text-rose-900 px-2 py-0.5 rounded-full border border-rose-300">
+                    Regra: 5 Dias Úteis
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-700 leading-snug">
+                  Pedidos que atingiram ou ultrapassaram o prazo de 5 dias úteis antes da data de entrega e <strong>ainda não foram iniciados</strong> no almoxarifado. Inicie a separação para prevenir atrasos na expedição hospitalar!
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 self-end md:self-center flex-wrap">
+              <button
+                onClick={() => {
+                  setSelectedQuickFilters(['ALERTA_SEPARACAO']);
+                  setCurrentPage(1);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-700 hover:bg-rose-800 active:scale-95 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+              >
+                <span>Ver {separationAlertOrders.length} Pedidos Críticos</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+
+              {currentUser.role !== 'VIEWER' && (
+                <button
+                  onClick={() => {
+                    const today = new Date().toISOString().split('T')[0];
+                    const timeNow = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                    const alertIds = separationAlertOrders.map(o => o.id);
+                    updateOrders(
+                      alertIds,
+                      {
+                        status_operacional: 'Em Separação',
+                        separador: currentUser.nome,
+                        separado_em: `${today} ${timeNow}`,
+                      },
+                      currentUser,
+                      `Início de separação em lote via alerta de 5 dias úteis por ${currentUser.nome}`
+                    );
+                    showToast('success', `${alertIds.length} Pedidos em Separação`, 'Status operacional atualizado com sucesso.');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-rose-50 text-rose-900 border border-rose-300 text-xs font-bold shadow-2xs transition-all cursor-pointer"
+                  title="Colocar todos os pedidos pendentes em 'Em Separação' com 1 clique"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-600 fill-amber-500" />
+                  <span>Iniciar Todas em Separação</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => setIsAlertBannerVisible(false)}
+                className="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-rose-100 flex items-center justify-center text-xs transition-colors cursor-pointer"
+                title="Dispensar aviso"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* VIEW 1: REFINED INTERACTIVE TABELA - relative z-10 so filters above overlay it */}
       {viewMode === 'tabela' && (
@@ -904,6 +1094,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                   paginatedOrders.map((order, idx) => {
                     const sch = order.cronograma_id ? schedulesMap.get(order.cronograma_id) : null;
                     const { situation, label, targetDate } = calculateDeadlineSituation(order, sch, settings.horas_alerta_atencao);
+                    const separationAlert = separationAlertsMap.get(order.id);
                     return (
                       <tr
                         key={`${order.id}-${idx}`}
@@ -939,11 +1130,44 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         </td>
 
                         <td className="py-2.5 px-3 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-[11px] text-slate-500 font-medium">
-                              {formatShortDate(targetDate)}
-                            </span>
-                            <DeadlineBadge situation={situation} label={label} />
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[11px] text-slate-500 font-medium">
+                                {formatShortDate(targetDate)}
+                              </span>
+                              <DeadlineBadge situation={situation} label={label} />
+                            </div>
+                            {separationAlert && (separationAlert.severity === 'CRITICO' || separationAlert.severity === 'ALERTA') && (
+                              <div className="flex items-center gap-1.5 pt-0.5">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border flex items-center gap-1 ${
+                                  separationAlert.severity === 'CRITICO' 
+                                    ? 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse' 
+                                    : 'bg-amber-100 text-amber-800 border-amber-300'
+                                }`}>
+                                  {separationAlert.severity === 'CRITICO' ? '🚨' : '⚠️'} {separationAlert.badgeLabel}
+                                </span>
+                                {currentUser.role !== 'VIEWER' && !separationAlert.isStarted && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const today = new Date().toISOString().split('T')[0];
+                                      const timeNow = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                                      updateOperationalStatus(order.id, 'Em Separação', currentUser, 'Separação iniciada via alerta rápido da tabela');
+                                      updateOrder(order.id, {
+                                        separador: currentUser.nome,
+                                        separado_em: `${today} ${timeNow}`,
+                                        data_inicio_separacao: order.data_inicio_separacao || today,
+                                      }, currentUser, 'Registro de início de separação');
+                                      showToast('success', `${order.codigo} em separação`, 'Demanda iniciada.');
+                                    }}
+                                    className="text-[9px] font-bold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-1.5 py-0.5 rounded cursor-pointer transition-all active:scale-95"
+                                    title="Iniciar separação agora"
+                                  >
+                                    ⚡ Iniciar
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </td>
                         
@@ -1211,7 +1435,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                           </div>
 
                           {/* SLA / Deadline Row */}
-                          <div className="flex items-center justify-between text-[11px] mb-3">
+                          <div className="flex items-center justify-between text-[11px] mb-2.5">
                             <DeadlineBadge situation={situation} label={label} />
                             {targetDate && situation !== 'Fora do cronograma' && (
                               <span className="text-[10px] font-mono text-slate-400">
@@ -1219,6 +1443,23 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                               </span>
                             )}
                           </div>
+
+                          {/* Separation Alert Warning if critical or alert */}
+                          {(() => {
+                            const sepAlert = separationAlertsMap.get(order.id);
+                            if (!sepAlert || (sepAlert.severity !== 'CRITICO' && sepAlert.severity !== 'ALERTA')) return null;
+                            return (
+                              <div className="mb-2.5 p-1.5 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between text-[10px]">
+                                <span className="font-bold text-rose-800 flex items-center gap-1">
+                                  <span>🚨</span>
+                                  <span>{sepAlert.badgeLabel}</span>
+                                </span>
+                                <span className="text-[9px] text-rose-600 font-semibold font-mono">
+                                  {sepAlert.businessDaysRemaining}d úteis p/ entrega
+                                </span>
+                              </div>
+                            );
+                          })()}
 
                           {/* Card Footer: Balanced Action Buttons Bar */}
                           {currentUser.role !== 'VIEWER' && (col.retroactTo || col.advanceTo) && (

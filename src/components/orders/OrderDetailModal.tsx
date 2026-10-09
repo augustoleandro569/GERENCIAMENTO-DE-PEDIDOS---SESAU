@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../../hooks/useStore';
 import { Order, OrderStatus } from '../../types';
-import { calculateDeadlineSituation, formatDate, formatShortDate } from '../../utils/dateUtils';
+import { calculateDeadlineSituation, formatDate, formatShortDate, getSeparationAlertInfo, calculatePickingStartDate } from '../../utils/dateUtils';
 import { StatusBadge, TypeTag, DeadlineBadge, PriorityBadge, InlineStatusSelect } from '../common/StatusBadge';
 import { showToast } from '../common/Toast';
 import { 
@@ -24,7 +24,10 @@ import {
   Zap,
   Check,
   CalendarCheck,
-  Sparkles
+  Sparkles,
+  ArrowRight,
+  Flame,
+  AlertOctagon
 } from 'lucide-react';
 
 interface OrderDetailModalProps {
@@ -42,6 +45,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
   // Operational Cycle Dates local state
   const [dataInicio, setDataInicio] = useState('');
   const [dataSolicitacao, setDataSolicitacao] = useState('');
+  const [dataLimiteAprovacao, setDataLimiteAprovacao] = useState('');
   const [dataAprovacao, setDataAprovacao] = useState('');
   const [dataInicioSeparacao, setDataInicioSeparacao] = useState('');
   const [dataExpedicao, setDataExpedicao] = useState('');
@@ -68,6 +72,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
     if (order) {
       setDataInicio(extractDateOnly(order.data_inicio || order.data_solicitacao || order.criado_em));
       setDataSolicitacao(extractDateOnly(order.data_solicitacao || order.criado_em));
+      setDataLimiteAprovacao(extractDateOnly(order.data_limite_aprovacao || ''));
       setDataAprovacao(extractDateOnly(order.data_aprovacao || order.validada_em || order.validado_em));
       setDataInicioSeparacao(extractDateOnly(order.data_inicio_separacao || order.separado_em));
       setDataExpedicao(extractDateOnly(order.data_expedicao || order.expedido_em));
@@ -84,6 +89,44 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
 
   const orderAuditLogs = auditLogs.filter(l => l.pedido_id === order.id);
   const { situation, label } = calculateDeadlineSituation(order, schedule, settings.horas_alerta_atencao);
+  const separationAlert = getSeparationAlertInfo(order, schedule);
+
+  const handleDeliveryChangeWithAutoSeparation = (val: string) => {
+    setDataPrevistaEntrega(val);
+    if (val) {
+      const autoPick = calculatePickingStartDate(val, 5);
+      setDataInicioSeparacao(autoPick);
+      showToast('info', 'Início de Separação recalculado', `Data ajustada para ${formatShortDate(autoPick)} (5 dias úteis antes da entrega)`);
+    }
+  };
+
+  const handleRecalculateSeparation = () => {
+    const targetDel = dataPrevistaEntrega || order.data_prevista_entrega || schedule?.data_entrega;
+    if (targetDel) {
+      const autoPick = calculatePickingStartDate(targetDel, 5);
+      setDataInicioSeparacao(autoPick);
+      showToast('success', 'Recalculado: 5 Dias Úteis', `Nova data de início da separação: ${formatShortDate(autoPick)}`);
+    } else {
+      showToast('warning', 'Data de Entrega Necessária', 'Defina a data de entrega para calcular os 5 dias úteis.');
+    }
+  };
+
+  const handleQuickStartSeparation = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const timeNow = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    updateOrder(
+      order.id,
+      {
+        status_operacional: 'Em Separação',
+        separador: currentUser.nome,
+        separado_em: `${today} ${timeNow}`,
+        data_inicio_separacao: order.data_inicio_separacao || today,
+      },
+      currentUser,
+      `Separação iniciada emergencialmente via Alerta de 5 dias úteis por ${currentUser.nome}`
+    );
+    showToast('success', 'Demanda Iniciada!', `Separação do pedido ${order.codigo} colocada em andamento.`);
+  };
 
   const handleSaveDatesAndSchedule = () => {
     const isUnlinking = selectedScheduleId === 'NONE';
@@ -92,6 +135,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
       cronograma_vinculo: isUnlinking ? 'NENHUM' : 'MANUAL',
       data_inicio: isUnlinking ? undefined : (dataInicio || undefined),
       data_solicitacao: dataSolicitacao || undefined,
+      data_limite_aprovacao: dataLimiteAprovacao || undefined,
       data_aprovacao: isUnlinking ? undefined : (dataAprovacao || undefined),
       data_inicio_separacao: isUnlinking ? undefined : (dataInicioSeparacao || undefined),
       data_expedicao: isUnlinking ? undefined : (dataExpedicao || undefined),
@@ -103,7 +147,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
     };
 
     updateOrder(order.id, updates, currentUser, isUnlinking ? 'Desvinculação manual do cronograma' : 'Atualização das datas operacionais e cronograma');
-    showToast('success', `${order.codigo} atualizado`, isUnlinking ? 'Pedido desvinculado do cronograma com sucesso.' : 'Data de inicialização, solicitação e ciclo operacional salvas com sucesso.');
+    showToast('success', `${order.codigo} atualizado`, isUnlinking ? 'Pedido desvinculado do cronograma com sucesso.' : 'Data de inicialização, solicitação, aprovação e ciclo operacional salvas com sucesso.');
   };
 
   const handleQuickStatusChange = (newStatus: OrderStatus) => {
@@ -335,6 +379,97 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
 
         {/* Tab Contents */}
         <div className="flex-1 p-6 overflow-y-auto space-y-4">
+          {/* INTERACTIVE 5-BUSINESS-DAY SEPARATION ALERT WIDGET */}
+          {separationAlert.hasDeliveryDate && (
+            <div className={`p-4 rounded-3xl border transition-all ${
+              separationAlert.severity === 'CRITICO'
+                ? 'bg-gradient-to-r from-rose-50 via-rose-100/60 to-red-50 border-rose-300 shadow-sm'
+                : separationAlert.severity === 'ALERTA'
+                ? 'bg-gradient-to-r from-amber-50 via-amber-100/60 to-orange-50 border-amber-300 shadow-sm'
+                : separationAlert.severity === 'IMINENTE'
+                ? 'bg-gradient-to-r from-sky-50 to-blue-50 border-sky-300'
+                : separationAlert.severity === 'CONCLUIDO'
+                ? 'bg-emerald-50/70 border-emerald-200'
+                : 'bg-slate-50 border-slate-200'
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5">
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-8 h-8 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                    separationAlert.severity === 'CRITICO' ? 'bg-rose-600 text-white animate-pulse' :
+                    separationAlert.severity === 'ALERTA' ? 'bg-amber-600 text-white' :
+                    separationAlert.severity === 'IMINENTE' ? 'bg-sky-600 text-white' :
+                    separationAlert.severity === 'CONCLUIDO' ? 'bg-emerald-600 text-white' :
+                    'bg-slate-400 text-white'
+                  }`}>
+                    {separationAlert.severity === 'CRITICO' ? '🚨' :
+                     separationAlert.severity === 'ALERTA' ? '⚠️' :
+                     separationAlert.severity === 'IMINENTE' ? '⚡' :
+                     separationAlert.severity === 'CONCLUIDO' ? '✓' : 'ℹ️'}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                        {separationAlert.title}
+                      </h4>
+                      <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${separationAlert.badgeColor.bg} ${separationAlert.badgeColor.text} ${separationAlert.badgeColor.border}`}>
+                        {separationAlert.badgeLabel}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 mt-0.5">
+                      {separationAlert.description}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Quick 1-Click Action Button when not started */}
+                {!separationAlert.isStarted && (separationAlert.severity === 'CRITICO' || separationAlert.severity === 'ALERTA' || separationAlert.severity === 'IMINENTE') && (
+                  <button
+                    onClick={handleQuickStartSeparation}
+                    disabled={currentUser.role === 'VIEWER'}
+                    className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-2xl text-xs font-bold text-white shadow-sm hover:shadow-md active:scale-95 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      separationAlert.severity === 'CRITICO'
+                        ? 'bg-rose-600 hover:bg-rose-700'
+                        : 'bg-amber-600 hover:bg-amber-700'
+                    }`}
+                    title="Muda o status para 'Em Separação' e vincula o usuário atual como separador"
+                  >
+                    <Zap className="w-3.5 h-3.5 fill-current" />
+                    <span>Iniciar Separação Agora</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Interactive Visual Gauge: Início Separação (-5 dias úteis) -> Entrega */}
+              <div className="pt-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <div className="p-2 bg-white/80 rounded-xl border border-slate-200/80 shadow-2xs">
+                    <span className="text-[10px] text-slate-500 block font-medium">Início Separação (-5d úteis)</span>
+                    <strong className="font-mono text-slate-900 text-xs">{formatShortDate(separationAlert.pickingStartDate)}</strong>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-slate-400 shrink-0 hidden sm:block" />
+                  <div className="p-2 bg-white/80 rounded-xl border border-slate-200/80 shadow-2xs">
+                    <span className="text-[10px] text-slate-500 block font-medium">Prazo de Entrega</span>
+                    <strong className="font-mono text-blue-900 text-xs">{formatShortDate(separationAlert.deliveryDate)}</strong>
+                  </div>
+                  <div className="p-2 bg-white/80 rounded-xl border border-slate-200/80 shadow-2xs">
+                    <span className="text-[10px] text-slate-500 block font-medium">Dias Úteis Restantes</span>
+                    <strong className={`font-mono text-xs ${
+                      separationAlert.businessDaysRemaining <= 2 ? 'text-rose-700 font-black' :
+                      separationAlert.businessDaysRemaining <= 5 ? 'text-amber-700 font-bold' : 'text-slate-800'
+                    }`}>
+                      {separationAlert.businessDaysRemaining} dias úteis
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-500 text-right w-full sm:w-auto">
+                  <span>Recomendação: </span>
+                  <strong className="text-slate-800 font-semibold">{separationAlert.actionRecommended}</strong>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* TAB: RESUMO */}
           {activeTab === 'resumo' && (
             <div className="space-y-4">
@@ -475,14 +610,14 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
                     />
                   </div>
 
-                  {/* Data 1: Solicitação */}
+                  {/* Data 1: Solicitação (Informativa - sem tag no calendário) */}
                   <div className="space-y-1.5 p-3 bg-slate-50/80 rounded-2xl border border-slate-200/70">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-bold text-slate-700">
                         1. Data de Solicitação:
                       </label>
                       <button 
-                        type="button"
+                        type="button" 
                         onClick={() => setDataSolicitacao(getPresetDate(0))}
                         className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded-full hover:bg-blue-50"
                       >
@@ -495,6 +630,34 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
                       onChange={(e) => setDataSolicitacao(e.target.value)}
                       className="w-full text-xs font-mono bg-white border border-slate-200 rounded-xl p-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     />
+                    <span className="text-[9px] text-slate-600 block italic leading-tight">
+                      Informativo · sem tag no calendário
+                    </span>
+                  </div>
+
+                  {/* Data 2: Limite de Aprovação (Informativa - sem tag no calendário) */}
+                  <div className="space-y-1.5 p-3 bg-slate-50/80 rounded-2xl border border-slate-200/70">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-slate-700">
+                        2. Limite de Aprovação:
+                      </label>
+                      <button 
+                        type="button" 
+                        onClick={() => setDataLimiteAprovacao(getPresetDate(1))}
+                        className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded-full hover:bg-blue-50"
+                      >
+                        +1d
+                      </button>
+                    </div>
+                    <input
+                      type="date"
+                      value={dataLimiteAprovacao}
+                      onChange={(e) => setDataLimiteAprovacao(e.target.value)}
+                      className="w-full text-xs font-mono bg-white border border-slate-200 rounded-xl p-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                    <span className="text-[9px] text-slate-600 block italic leading-tight">
+                      Informativo · sem tag no calendário
+                    </span>
                   </div>
 
                   {/* Data 2: Aprovação */}
@@ -520,25 +683,32 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
                   </div>
 
                   {/* Data 3: Inicialização de Separação */}
-                  <div className="space-y-1.5 p-3 bg-slate-50/80 rounded-2xl border border-slate-200/70">
+                  <div className="space-y-1.5 p-3 bg-indigo-50/70 rounded-2xl border border-indigo-200">
                     <div className="flex items-center justify-between">
-                      <label className="text-[11px] font-bold text-slate-700">
-                        3. Inicialização Separação:
+                      <label className="text-[11px] font-bold text-indigo-900 flex items-center gap-1">
+                        <span>3. Início Separação:</span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-200 text-indigo-800">
+                          -5d úteis
+                        </span>
                       </label>
                       <button 
-                        type="button"
-                        onClick={() => setDataInicioSeparacao(getPresetDate(0))}
-                        className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded-full hover:bg-blue-50"
+                        type="button" 
+                        onClick={handleRecalculateSeparation}
+                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 px-1.5 py-0.5 rounded-full hover:bg-indigo-100 flex items-center gap-0.5"
+                        title="Calcular 5 dias úteis antes do prazo de entrega"
                       >
-                        Hoje
+                        ⚡ Recalcular
                       </button>
                     </div>
                     <input
                       type="date"
                       value={dataInicioSeparacao}
                       onChange={(e) => setDataInicioSeparacao(e.target.value)}
-                      className="w-full text-xs font-mono bg-white border border-slate-200 rounded-xl p-2 text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      className="w-full text-xs font-mono bg-white border border-indigo-300 rounded-xl p-2 text-indigo-950 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                     />
+                    <span className="text-[9px] text-indigo-700 block leading-tight font-medium">
+                      5 dias úteis de antecedência do prazo de entrega
+                    </span>
                   </div>
 
                   {/* Data 4: Expedição */}
@@ -573,29 +743,30 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
                   </div>
 
                   {/* Data 5: Entrega (Prevista / Efetiva) */}
-                  <div className="space-y-1.5 p-3 bg-blue-50/60 rounded-2xl border border-blue-200">
+                  <div className="space-y-1.5 p-3 bg-blue-50/80 rounded-2xl border border-blue-300 sm:col-span-2 md:col-span-3">
                     <div className="flex items-center justify-between">
-                      <label className="text-[11px] font-bold text-blue-800">
-                        5. Data de Entrega (Calendário):
+                      <label className="text-[11px] font-bold text-blue-900 flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Data Prevista de Entrega (Calendário Unificado & Marco de Expedição):</span>
                       </label>
                       <div className="flex items-center gap-1">
                         <button 
                           type="button"
-                          onClick={() => setDataPrevistaEntrega(getPresetDate(0))}
+                          onClick={() => handleDeliveryChangeWithAutoSeparation(getPresetDate(0))}
                           className="text-[10px] font-bold text-blue-700 hover:text-blue-900 px-1.5 py-0.5 rounded-full hover:bg-blue-100"
                         >
                           Hoje
                         </button>
                         <button 
                           type="button"
-                          onClick={() => setDataPrevistaEntrega(getPresetDate(3))}
+                          onClick={() => handleDeliveryChangeWithAutoSeparation(getPresetDate(3))}
                           className="text-[10px] font-bold text-blue-700 hover:text-blue-900 px-1.5 py-0.5 rounded-full hover:bg-blue-100"
                         >
                           +3d
                         </button>
                         <button 
                           type="button"
-                          onClick={() => setDataPrevistaEntrega(getPresetDate(7))}
+                          onClick={() => handleDeliveryChangeWithAutoSeparation(getPresetDate(7))}
                           className="text-[10px] font-bold text-blue-700 hover:text-blue-900 px-1.5 py-0.5 rounded-full hover:bg-blue-100"
                         >
                           +7d
@@ -605,9 +776,12 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
                     <input
                       type="date"
                       value={dataPrevistaEntrega}
-                      onChange={(e) => setDataPrevistaEntrega(e.target.value)}
-                      className="w-full text-xs font-mono bg-white border border-blue-300 rounded-xl p-2 text-blue-950 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      onChange={(e) => handleDeliveryChangeWithAutoSeparation(e.target.value)}
+                      className="w-full text-xs font-mono bg-white border border-blue-400 rounded-xl p-2 text-blue-950 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     />
+                    <div className="flex items-center justify-between text-[10px] text-blue-700 pt-0.5">
+                      <span>⚡ Ao alterar a data de entrega, o Início de Separação é recalculado automaticamente com 5 dias úteis de antecedência.</span>
+                    </div>
                   </div>
                 </div>
 

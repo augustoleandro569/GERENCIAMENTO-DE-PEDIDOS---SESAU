@@ -175,6 +175,15 @@ class AppStore {
       console.warn('Cache read warning:', err);
     }
 
+    // Load cloud settings asynchronously so settings match across devices
+    dbSync.getSystemSettings().then(cloudSettings => {
+      if (cloudSettings) {
+        this.settings = cloudSettings;
+        this.save(STORAGE_KEYS.SETTINGS, this.settings);
+        this.notify();
+      }
+    }).catch(err => console.warn('Cloud settings init note:', err));
+
     // 3. Setup real-time listener handlers
     dbSync.setChangeListeners(
       (payload) => this.handleRemoteOrderPayload(payload),
@@ -252,37 +261,29 @@ class AppStore {
           return true;
         });
 
-        // Merge orders intelligently by code, preserving the newest data
-        const mergedMap = new Map<string, Order>();
-        backendOrders.forEach(bo => {
-          if (bo && bo.codigo) {
-            mergedMap.set(bo.codigo.toUpperCase().trim(), bo);
-          }
-        });
-
-        // If local order has more recent updates (or was imported in session), retain the latest version
-        this.orders.forEach(lo => {
-          if (!lo || !lo.codigo) return;
+        // The centralized database is the single source of truth across all devices/computers!
+        // Prioritize backend orders. Only if a brand-new order was created locally in the last 5 minutes
+        // that hasn't synced yet, retain it.
+        const backendCodeSet = new Set(backendOrders.map(b => b.codigo.toUpperCase().trim()));
+        const localNewOrders = this.orders.filter(lo => {
+          if (!lo || !lo.codigo) return false;
           const codeUpper = lo.codigo.toUpperCase().trim();
-          const existing = mergedMap.get(codeUpper);
-          if (!existing) {
-            mergedMap.set(codeUpper, lo);
-          } else {
-            const loTime = new Date(lo.atualizado_em || lo.criado_em || 0).getTime();
-            const boTime = new Date(existing.atualizado_em || existing.criado_em || 0).getTime();
-            if (loTime > boTime) {
-              mergedMap.set(codeUpper, lo);
-            }
-          }
+          if (backendCodeSet.has(codeUpper)) return false;
+          const createdTime = new Date(lo.criado_no_sistema_em || lo.criado_em || 0).getTime();
+          return (Date.now() - createdTime) < 5 * 60 * 1000;
         });
 
-        this.orders = Array.from(mergedMap.values());
+        this.orders = [...localNewOrders, ...backendOrders];
 
-        if (res.schedules.length > 0) {
+        if (res.schedules) {
           this.schedules = res.schedules;
         }
-        if (res.units.length > 0) {
+        if (res.units && res.units.length > 0) {
           this.units = res.units;
+        }
+        if (res.imports && res.imports.length > 0) {
+          this.importRecords = res.imports;
+          this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
         }
 
         // Cache the verified full dataset into IndexedDB and localStorage
@@ -403,6 +404,7 @@ class AppStore {
   public updateSettings(partial: Partial<SystemSettings>) {
     this.settings = { ...this.settings, ...partial };
     this.save(STORAGE_KEYS.SETTINGS, this.settings);
+    dbSync.saveSystemSettings(this.settings);
     this.notify();
   }
 
@@ -681,6 +683,7 @@ class AppStore {
     const now = new Date().toISOString();
     const user = typeof responsavel === 'object' && responsavel !== null ? responsavel.nome : (responsavel || this.currentUser.nome);
     let updatedCount = 0;
+    const affectedOrders: Order[] = [];
 
     for (let i = 0; i < this.orders.length; i++) {
       const current = this.orders[i];
@@ -692,6 +695,7 @@ class AppStore {
           atualizado_em: now,
         };
         updatedCount++;
+        affectedOrders.push(this.orders[i]);
 
         if (observacao) {
           this.addAuditLog({
@@ -704,12 +708,13 @@ class AppStore {
             novo_valor: observacao,
           });
         }
-        dbSync.saveOrder(this.orders[i]);
       }
     }
 
     if (updatedCount > 0) {
       this.save(STORAGE_KEYS.ORDERS, this.orders);
+      // Batch save all affected orders in a single high-performance bulk operation
+      dbSync.saveOrders(affectedOrders);
       this.notify();
     }
     return updatedCount;
@@ -1105,8 +1110,8 @@ class AppStore {
     const newSch: Schedule = { ...scheduleData, id };
     this.schedules.push(newSch);
 
+    const affectedOrders: Order[] = [];
     if (this.settings.auto_vincular_cronograma) {
-      let linked = false;
       this.orders.forEach(order => {
         if (!order.cronograma_id && order.cronograma_vinculo !== 'NENHUM') {
           const match = this.findMatchingSchedule(order.unidade, order.programa, order.tipo);
@@ -1116,17 +1121,22 @@ class AppStore {
             if (!order.data_prevista_entrega && newSch.data_entrega) {
               order.data_prevista_entrega = newSch.data_entrega;
             }
-            linked = true;
+            order.atualizado_em = new Date().toISOString();
+            affectedOrders.push(order);
           }
         }
       });
-      if (linked) {
+      if (affectedOrders.length > 0) {
         this.save(STORAGE_KEYS.ORDERS, this.orders);
       }
     }
 
     this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
-    dbSync.saveSchedule(newSch);
+    dbSync.saveSchedule(newSch).then(() => {
+      if (affectedOrders.length > 0) {
+        dbSync.saveOrders(affectedOrders);
+      }
+    });
     this.notify();
     return newSch;
   }
@@ -1139,8 +1149,8 @@ class AppStore {
     }));
     this.schedules.push(...created);
 
+    const affectedOrders: Order[] = [];
     if (this.settings.auto_vincular_cronograma) {
-      let linked = false;
       this.orders.forEach(order => {
         if (!order.cronograma_id && order.cronograma_vinculo !== 'NENHUM') {
           const match = this.findMatchingSchedule(order.unidade, order.programa, order.tipo);
@@ -1150,17 +1160,22 @@ class AppStore {
             if (!order.data_prevista_entrega && match.data_entrega) {
               order.data_prevista_entrega = match.data_entrega;
             }
-            linked = true;
+            order.atualizado_em = new Date().toISOString();
+            affectedOrders.push(order);
           }
         }
       });
-      if (linked) {
+      if (affectedOrders.length > 0) {
         this.save(STORAGE_KEYS.ORDERS, this.orders);
       }
     }
 
     this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
-    created.forEach(s => dbSync.saveSchedule(s));
+    Promise.all(created.map(s => dbSync.saveSchedule(s))).then(() => {
+      if (affectedOrders.length > 0) {
+        dbSync.saveOrders(affectedOrders);
+      }
+    });
     this.notify();
     return created;
   }
@@ -1185,6 +1200,8 @@ class AppStore {
   // Auto-link trigger for all unlinked orders
   public runAutoLinking(): { linkedCount: number } {
     let linkedCount = 0;
+    const affectedOrders: Order[] = [];
+    const now = new Date().toISOString();
     this.orders.forEach(order => {
       // Do not re-link orders explicitly marked as NENHUM (manually unlinked)
       if (!order.cronograma_id && order.cronograma_vinculo !== 'NENHUM') {
@@ -1195,13 +1212,17 @@ class AppStore {
           if (!order.data_prevista_entrega && match.data_entrega) {
             order.data_prevista_entrega = match.data_entrega;
           }
+          order.atualizado_em = now;
+          affectedOrders.push(order);
           linkedCount++;
         }
       }
     });
 
-    if (linkedCount > 0) {
+    if (affectedOrders.length > 0) {
       this.save(STORAGE_KEYS.ORDERS, this.orders);
+      dbSync.saveOrders(affectedOrders);
+      this.notify();
     }
     return { linkedCount };
   }

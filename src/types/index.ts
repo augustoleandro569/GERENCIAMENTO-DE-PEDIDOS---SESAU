@@ -96,9 +96,10 @@ export interface Order {
   cronograma_vinculo?: ScheduleLinkType;
   // Lifecycle / Phase Dates (Datas do Ciclo Operacional)
   data_inicio?: string; // Data de Inicialização do Pedido (YYYY-MM-DD ou YYYY-MM-DD HH:mm)
-  data_solicitacao?: string; // YYYY-MM-DD ou YYYY-MM-DD HH:mm
+  data_solicitacao?: string; // Data de Solicitação (Informativa - sem tag no calendário)
+  data_limite_aprovacao?: string; // Limite de Aprovação (Informativa - sem tag no calendário)
   data_aprovacao?: string; // YYYY-MM-DD ou YYYY-MM-DD HH:mm
-  data_inicio_separacao?: string; // YYYY-MM-DD ou YYYY-MM-DD HH:mm
+  data_inicio_separacao?: string; // Preenchida automaticamente com 5 dias úteis antes da entrega
   data_expedicao?: string; // YYYY-MM-DD ou YYYY-MM-DD HH:mm
   data_prevista_entrega?: string; // YYYY-MM-DD or specific calendar date
 

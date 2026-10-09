@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   setDoc,
+  getDoc,
   getDocs,
   onSnapshot,
   writeBatch,
@@ -12,7 +13,7 @@ import {
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { getSupabaseClient, getSavedSupabaseConfig } from '../lib/supabase';
-import { Order, Schedule, HospitalUnit, AuditLog, OrderEvent, ImportRecord } from '../types';
+import { Order, Schedule, HospitalUnit, AuditLog, OrderEvent, ImportRecord, SystemSettings } from '../types';
 import { parseHistoryToEvents } from '../utils/historyParser';
 import { computeRealisticItemCount } from '../utils/itemQuantity';
 
@@ -173,6 +174,7 @@ class DatabaseSyncService {
     orders: Order[];
     schedules: Schedule[];
     units: HospitalUnit[];
+    imports: ImportRecord[];
     message?: string;
   }> {
     const supabase = getSupabaseClient();
@@ -182,6 +184,7 @@ class DatabaseSyncService {
         orders: [],
         schedules: [],
         units: [],
+        imports: [],
         message: 'Cliente Supabase não configurado ou credenciais inválidas.',
       };
     }
@@ -365,6 +368,7 @@ class DatabaseSyncService {
           criado_em: o.criado_em || '',
           data_inicio: o.data_inicio || '',
           data_solicitacao: o.data_solicitacao || '',
+          data_limite_aprovacao: o.data_limite_aprovacao || o.data_aprovacao || '',
           data_aprovacao: o.data_aprovacao || '',
           data_inicio_separacao: o.data_inicio_separacao || '',
           data_expedicao: o.data_expedicao || '',
@@ -420,6 +424,34 @@ class DatabaseSyncService {
         ativa: u.ativa !== false,
       }));
 
+      // 4. Fetch Imports from Supabase
+      let formattedImports: ImportRecord[] = [];
+      try {
+        const { data: rawImports, error: impErr } = await supabase
+          .from('importacoes')
+          .select('*')
+          .order('data_importacao', { ascending: false });
+
+        if (!impErr && rawImports && rawImports.length > 0) {
+          formattedImports = rawImports.map((imp: any) => ({
+            id: imp.id,
+            arquivo: imp.arquivo,
+            data_importacao: imp.data_importacao,
+            usuario: imp.usuario,
+            quantidade_registros: Number(imp.quantidade_registros) || 0,
+            novos: Number(imp.novos) || 0,
+            atualizados: Number(imp.atualizados) || 0,
+            sem_alteracao: Number(imp.sem_alteracao) || 0,
+            erros: Number(imp.erros) || 0,
+            status: imp.status || 'CONCLUIDA',
+            motivo_status: imp.motivo_status,
+            tempo_processamento_ms: imp.tempo_processamento_ms,
+          }));
+        }
+      } catch (impErr) {
+        console.warn('Importacoes fetch note:', impErr);
+      }
+
       // Setup Realtime Subscription if not active
       this.setupSupabaseRealtime(supabase);
 
@@ -435,6 +467,7 @@ class DatabaseSyncService {
         orders: formattedOrders,
         schedules: formattedSchedules,
         units: formattedUnits,
+        imports: formattedImports,
       };
     } catch (err: any) {
       console.error('Supabase strict sync error:', err);
@@ -446,6 +479,7 @@ class DatabaseSyncService {
         orders: [],
         schedules: [],
         units: [],
+        imports: [],
         message: err.message || String(err),
       };
     }
@@ -653,7 +687,67 @@ class DatabaseSyncService {
     }
   }
 
-  // Save single Order directly to Supabase & Firestore
+  // Cloud system settings & authentication password sync across computers
+  public async getSystemAuthPassword(): Promise<string> {
+    try {
+      const snap = await getDoc(doc(db, 'settings', 'system'));
+      if (snap.exists() && snap.data()?.custom_password) {
+        const pass = String(snap.data()?.custom_password).trim();
+        if (pass) {
+          try { localStorage.setItem('gp_custom_password', pass); } catch (_) {}
+          return pass;
+        }
+      }
+    } catch (e) {
+      console.warn('Note reading password from cloud:', e);
+    }
+    try {
+      const local = localStorage.getItem('gp_custom_password');
+      if (local) return local;
+    } catch (_) {}
+    return '123456789';
+  }
+
+  public async saveSystemAuthPassword(password: string): Promise<void> {
+    const clean = String(password || '').trim();
+    try {
+      localStorage.setItem('gp_custom_password', clean);
+    } catch (_) {}
+
+    try {
+      await setDoc(doc(db, 'settings', 'system'), {
+        custom_password: clean,
+        updated_at: new Date().toISOString()
+      }, { merge: true });
+    } catch (e) {
+      console.warn('Note persisting password to cloud:', e);
+    }
+  }
+
+  public async getSystemSettings(): Promise<SystemSettings | null> {
+    try {
+      const snap = await getDoc(doc(db, 'settings', 'system'));
+      if (snap.exists() && snap.data()?.system_settings) {
+        return snap.data()?.system_settings as SystemSettings;
+      }
+    } catch (e) {
+      console.warn('Note reading settings from cloud:', e);
+    }
+    return null;
+  }
+
+  public async saveSystemSettings(settings: SystemSettings): Promise<void> {
+    try {
+      await setDoc(doc(db, 'settings', 'system'), {
+        system_settings: settings,
+        updated_at: new Date().toISOString()
+      }, { merge: true });
+    } catch (e) {
+      console.warn('Note saving settings to cloud:', e);
+    }
+  }
+
+  // Save single Order directly to Supabase & Firestore with robust constraint handling
   public async saveOrder(order: Order): Promise<void> {
     if (!order.codigo || !order.codigo.toUpperCase().startsWith('SOL-2026-')) {
       console.warn(`[dbSync] Rejected save of non-standard order ${order.codigo}. Orders must begin with SOL-2026-.`);
@@ -663,58 +757,68 @@ class DatabaseSyncService {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        await supabase.from('pedidos').upsert({
+        const payload: Record<string, any> = {
           id: order.id,
           codigo: order.codigo,
-          origem: order.origem,
-          tipo: order.tipo,
-          solicitante: order.solicitante,
-          cpf: order.cpf,
-          programa: order.programa,
-          unidade: order.unidade,
-          quantidade_itens: order.quantidade_itens,
-          criado_em: order.criado_em,
-          status_origem: order.status_origem,
-          status_operacional: order.status_operacional,
-          validador: order.validador,
-          validada_em: order.validada_em,
-          separador: order.separador,
-          separado_em: order.separado_em,
-          conferente: order.conferente,
-          conferido_em: order.conferido_em,
-          expedidor: order.expedidor,
-          expedido_em: order.expedido_em,
-          entregador: order.entregador,
-          entregue_em: order.entregue_em,
-          historico_original: order.historico_original,
+          origem: order.origem || 'IMPORTAÇÃO',
+          tipo: order.tipo || 'Mensal',
+          solicitante: order.solicitante || 'Não Informado',
+          cpf: order.cpf || '',
+          programa: order.programa || 'Hospitalar',
+          unidade: order.unidade || '',
+          quantidade_itens: Number(order.quantidade_itens) || 1,
+          criado_em: order.criado_em || order.data_solicitacao || new Date().toISOString(),
+          status_origem: order.status_origem || 'Aguardando Validação',
+          status_operacional: order.status_operacional || 'Aguardando Validação',
+          validador: order.validador ?? null,
+          validada_em: order.validada_em ?? null,
+          separador: order.separador ?? null,
+          separado_em: order.separado_em ?? null,
+          conferente: order.conferente ?? null,
+          conferido_em: order.conferido_em ?? null,
+          expedidor: order.expedidor ?? null,
+          expedido_em: order.expedido_em ?? null,
+          entregador: order.entregador ?? null,
+          entregue_em: order.entregue_em ?? null,
+          historico_original: (order.historico_original || '').slice(0, 1500),
           cronograma_id: order.cronograma_id ?? null,
           cronograma_vinculo: order.cronograma_vinculo || 'NENHUM',
           data_inicio: order.data_inicio ?? null,
           data_solicitacao: order.data_solicitacao ?? null,
-          data_aprovacao: order.data_aprovacao ?? null,
+          data_aprovacao: order.data_limite_aprovacao || order.data_aprovacao || null,
           data_inicio_separacao: order.data_inicio_separacao ?? null,
           data_expedicao: order.data_expedicao ?? null,
           data_prevista_entrega: order.data_prevista_entrega ?? null,
-          prioridade: order.prioridade,
-          observacoes: order.observacoes,
-          importacao_id: order.importacao_id,
-          atualizado_em: new Date().toISOString(),
-        });
+          prioridade: order.prioridade || 'Normal',
+          observacoes: order.observacoes ?? null,
+          importacao_id: order.importacao_id ?? null,
+          atualizado_em: order.atualizado_em || new Date().toISOString(),
+        };
+
+        const { error: upsertErr } = await supabase.from('pedidos').upsert(payload, { onConflict: 'id' });
+        if (upsertErr) {
+          console.warn('Supabase order upsert note:', upsertErr.message);
+          // If foreign key constraint failed on cronograma_id, retry without cronograma_id to preserve all date/status updates
+          if (upsertErr.code === '23503' && payload.cronograma_id) {
+            console.warn(`Retrying upsert for ${order.codigo} without missing cronograma_id...`);
+            payload.cronograma_id = null;
+            await supabase.from('pedidos').upsert(payload, { onConflict: 'id' });
+          }
+        }
 
         // Also sync order events to eventos_pedidos
         if (order.eventos && order.eventos.length > 0) {
-          await supabase.from('eventos_pedidos').upsert(
-            order.eventos.map(e => ({
-              id: e.id,
-              pedido_id: e.pedido_id || order.id,
-              tipo_evento: e.tipo_evento,
-              status: e.status,
-              data_evento: e.data_evento,
-              responsavel: e.responsavel,
-              origem: e.origem || 'SISTEMA',
-              observacao: e.observacao,
-            }))
-          );
+          const eventsPayload = order.eventos.map(e => ({
+            id: e.id,
+            pedido_id: e.pedido_id || order.id,
+            tipo_evento: e.tipo_evento || 'Atualização',
+            status: e.status || 'Aguardando Validação',
+            data_evento: e.data_evento || new Date().toISOString(),
+            responsavel: e.responsavel || 'Sistema',
+            origem: e.origem || 'SISTEMA',
+            observacao: e.observacao || null,
+          }));
+          await supabase.from('eventos_pedidos').upsert(eventsPayload, { onConflict: 'id' });
         }
       } catch (err) {
         console.warn('Supabase order upsert note:', err);
@@ -730,7 +834,7 @@ class DatabaseSyncService {
     }
   }
 
-  // Bulk save multiple Orders efficiently (used in batch updates like unlinking a day)
+  // Bulk save multiple Orders efficiently (used in batch updates like unlinking a day or bulk links)
   public async saveOrders(orders: Order[]): Promise<void> {
     if (!orders || orders.length === 0) return;
     const supabase = getSupabaseClient();
@@ -739,27 +843,27 @@ class DatabaseSyncService {
         const payload = orders.map(order => ({
           id: order.id,
           codigo: order.codigo,
-          origem: order.origem,
-          tipo: order.tipo,
-          solicitante: order.solicitante,
-          cpf: order.cpf,
-          programa: order.programa,
-          unidade: order.unidade,
-          quantidade_itens: order.quantidade_itens,
-          criado_em: order.criado_em,
-          status_origem: order.status_origem,
-          status_operacional: order.status_operacional,
-          validador: order.validador,
-          validada_em: order.validada_em,
-          separador: order.separador,
-          separado_em: order.separado_em,
-          conferente: order.conferente,
-          conferido_em: order.conferido_em,
-          expedidor: order.expedidor,
-          expedido_em: order.expedido_em,
-          entregador: order.entregador,
-          entregue_em: order.entregue_em,
-          historico_original: order.historico_original,
+          origem: order.origem || 'IMPORTAÇÃO',
+          tipo: order.tipo || 'Mensal',
+          solicitante: order.solicitante || 'Não Informado',
+          cpf: order.cpf || '',
+          programa: order.programa || 'Hospitalar',
+          unidade: order.unidade || '',
+          quantidade_itens: Number(order.quantidade_itens) || 1,
+          criado_em: order.criado_em || order.data_solicitacao || new Date().toISOString(),
+          status_origem: order.status_origem || 'Aguardando Validação',
+          status_operacional: order.status_operacional || 'Aguardando Validação',
+          validador: order.validador ?? null,
+          validada_em: order.validada_em ?? null,
+          separador: order.separador ?? null,
+          separado_em: order.separado_em ?? null,
+          conferente: order.conferente ?? null,
+          conferido_em: order.conferido_em ?? null,
+          expedidor: order.expedidor ?? null,
+          expedido_em: order.expedido_em ?? null,
+          entregador: order.entregador ?? null,
+          entregue_em: order.entregue_em ?? null,
+          historico_original: (order.historico_original || '').slice(0, 1500),
           cronograma_id: order.cronograma_id ?? null,
           cronograma_vinculo: order.cronograma_vinculo || 'NENHUM',
           data_inicio: order.data_inicio ?? null,
@@ -768,32 +872,40 @@ class DatabaseSyncService {
           data_inicio_separacao: order.data_inicio_separacao ?? null,
           data_expedicao: order.data_expedicao ?? null,
           data_prevista_entrega: order.data_prevista_entrega ?? null,
-          prioridade: order.prioridade,
-          observacoes: order.observacoes,
-          importacao_id: order.importacao_id,
-          atualizado_em: new Date().toISOString(),
+          prioridade: order.prioridade || 'Normal',
+          observacoes: order.observacoes ?? null,
+          importacao_id: order.importacao_id ?? null,
+          atualizado_em: order.atualizado_em || new Date().toISOString(),
         }));
 
         for (let i = 0; i < payload.length; i += 100) {
           const chunk = payload.slice(i, i + 100);
-          await supabase.from('pedidos').upsert(chunk);
+          const { error: chunkErr } = await supabase.from('pedidos').upsert(chunk, { onConflict: 'id' });
+          if (chunkErr) {
+            console.warn('Supabase bulk chunk upsert error:', chunkErr.message);
+            // If foreign key constraint failed on any item in chunk, retry with null cronograma_id
+            if (chunkErr.code === '23503') {
+              const sanitizedChunk = chunk.map(c => ({ ...c, cronograma_id: null }));
+              await supabase.from('pedidos').upsert(sanitizedChunk, { onConflict: 'id' });
+            }
+          }
         }
 
         const eventsToUpsert = orders.flatMap(o => (o.eventos || []).map(e => ({
           id: e.id,
           pedido_id: e.pedido_id || o.id,
-          tipo_evento: e.tipo_evento,
-          status: e.status,
-          data_evento: e.data_evento,
-          responsavel: e.responsavel,
+          tipo_evento: e.tipo_evento || 'Atualização',
+          status: e.status || 'Aguardando Validação',
+          data_evento: e.data_evento || new Date().toISOString(),
+          responsavel: e.responsavel || 'Sistema',
           origem: e.origem || 'SISTEMA',
-          observacao: e.observacao,
+          observacao: e.observacao || null,
         })));
 
         if (eventsToUpsert.length > 0) {
           for (let i = 0; i < eventsToUpsert.length; i += 100) {
             const chunk = eventsToUpsert.slice(i, i + 100);
-            await supabase.from('eventos_pedidos').upsert(chunk);
+            await supabase.from('eventos_pedidos').upsert(chunk, { onConflict: 'id' });
           }
         }
       } catch (err) {

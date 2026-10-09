@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useStore } from '../../hooks/useStore';
 import { OrderStatus, Priority, RequestType, ProgramName } from '../../types';
-import { X, Plus, Sparkles, Calendar } from 'lucide-react';
+import { calculatePickingStartDate, formatShortDate, countBusinessDaysBetween, parseDateSafe } from '../../utils/dateUtils';
+import { X, Plus, Sparkles, Calendar, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 
 interface NewOrderModalProps {
   isOpen: boolean;
@@ -36,10 +37,12 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
   const [dataSolicitacao, setDataSolicitacao] = useState(
     new Date().toISOString().split('T')[0]
   );
+  const [dataLimiteAprovacao, setDataLimiteAprovacao] = useState('');
   const [dataAprovacao, setDataAprovacao] = useState('');
   const [dataInicioSeparacao, setDataInicioSeparacao] = useState('');
   const [dataExpedicao, setDataExpedicao] = useState('');
   const [dataPrevistaEntrega, setDataPrevistaEntrega] = useState('');
+  const [isAutoSeparationActive, setIsAutoSeparationActive] = useState(true);
 
   const [status, setStatus] = useState<OrderStatus>('Aguardando Aprovação');
   const [prioridade, setPrioridade] = useState<Priority>('Normal');
@@ -50,12 +53,27 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
   const isCodeStandard = cleanCode.startsWith('SOL-2026-') && cleanCode.length >= 10;
   const isCodeDuplicate = orders.some(o => o.codigo.toUpperCase() === cleanCode);
 
-  if (!isOpen) return null;
-
   const getPresetDate = (daysFromToday: number) => {
     const d = new Date();
     d.setDate(d.getDate() + daysFromToday);
     return d.toISOString().split('T')[0];
+  };
+
+  const handleDeliveryDateChange = (val: string) => {
+    setDataPrevistaEntrega(val);
+    if (val) {
+      const autoPicking = calculatePickingStartDate(val, 5);
+      setDataInicioSeparacao(autoPicking);
+      setIsAutoSeparationActive(true);
+    }
+  };
+
+  const handleRecalculateSeparation = () => {
+    if (dataPrevistaEntrega) {
+      const autoPicking = calculatePickingStartDate(dataPrevistaEntrega, 5);
+      setDataInicioSeparacao(autoPicking);
+      setIsAutoSeparationActive(true);
+    }
   };
 
   const handleTipoChange = (newTipo: RequestType) => {
@@ -84,8 +102,9 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
         criado_em: dataInicio || dataSolicitacao,
         data_inicio: dataInicio || dataSolicitacao,
         data_solicitacao: dataSolicitacao,
+        data_limite_aprovacao: dataLimiteAprovacao || undefined,
         data_aprovacao: dataAprovacao || undefined,
-        data_inicio_separacao: dataInicioSeparacao || undefined,
+        data_inicio_separacao: dataInicioSeparacao || (dataPrevistaEntrega ? calculatePickingStartDate(dataPrevistaEntrega, 5) : undefined),
         data_expedicao: dataExpedicao || undefined,
         data_prevista_entrega: dataPrevistaEntrega || undefined,
         validada_em: dataAprovacao ? `${dataAprovacao} 10:00` : undefined,
@@ -106,6 +125,8 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
 
     onClose();
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60">
@@ -302,22 +323,23 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
           </div>
 
           {/* Row: Datas do Ciclo Operacional - Rounded Card */}
-          <div className="p-4 bg-slate-50/90 rounded-2xl border border-slate-200/90 space-y-3">
+          <div className="p-4 bg-slate-50/90 rounded-2xl border border-slate-200/90 space-y-3.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5 text-blue-600" />
-                <span>Datas das Etapas Operacionais</span>
+                <span>Datas das Etapas & Controle de Prazos</span>
               </span>
-              <span className="text-[10px] text-slate-400 font-medium">
-                Prazos e datas de controle
+              <span className="text-[10px] text-slate-500 font-medium bg-slate-200/60 px-2 py-0.5 rounded-full">
+                Controle Operacional SESAU
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+              {/* Data 0: Inicialização */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold text-slate-700">
-                    Data de Inicialização *
+                    Data Inicialização *
                   </label>
                   <button 
                     type="button" 
@@ -336,10 +358,11 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
                 />
               </div>
 
+              {/* Data 1: Solicitação (Informativa - sem tag no calendário) */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-slate-700">
-                    Data Solicitação *
+                  <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+                    <span>Data Solicitação *</span>
                   </label>
                   <button 
                     type="button" 
@@ -356,58 +379,20 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
                   onChange={(e) => setDataSolicitacao(e.target.value)}
                   className="w-full text-xs font-mono px-3 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
                 />
+                <span className="text-[9px] text-slate-600 block italic leading-tight">
+                  Informativo · sem tag no calendário
+                </span>
               </div>
 
+              {/* Data 2: Limite de Aprovação (Informativa - sem tag no calendário) */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold text-slate-700">
-                    Data Aprovação
+                    Limite de Aprovação
                   </label>
                   <button 
                     type="button" 
-                    onClick={() => setDataAprovacao(getPresetDate(0))} 
-                    className="text-[10px] text-blue-600 font-bold hover:underline"
-                  >
-                    Hoje
-                  </button>
-                </div>
-                <input
-                  type="date"
-                  value={dataAprovacao}
-                  onChange={(e) => setDataAprovacao(e.target.value)}
-                  className="w-full text-xs font-mono px-3 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-slate-700">
-                    Início Separação
-                  </label>
-                  <button 
-                    type="button" 
-                    onClick={() => setDataInicioSeparacao(getPresetDate(0))} 
-                    className="text-[10px] text-blue-600 font-bold hover:underline"
-                  >
-                    Hoje
-                  </button>
-                </div>
-                <input
-                  type="date"
-                  value={dataInicioSeparacao}
-                  onChange={(e) => setDataInicioSeparacao(e.target.value)}
-                  className="w-full text-xs font-mono px-3 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-slate-700">
-                    Data Expedição
-                  </label>
-                  <button 
-                    type="button" 
-                    onClick={() => setDataExpedicao(getPresetDate(1))} 
+                    onClick={() => setDataLimiteAprovacao(getPresetDate(1))} 
                     className="text-[10px] text-blue-600 font-bold hover:underline"
                   >
                     +1d
@@ -415,42 +400,119 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
                 </div>
                 <input
                   type="date"
-                  value={dataExpedicao}
-                  onChange={(e) => setDataExpedicao(e.target.value)}
+                  value={dataLimiteAprovacao}
+                  onChange={(e) => setDataLimiteAprovacao(e.target.value)}
                   className="w-full text-xs font-mono px-3 py-1.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-medium"
                 />
+                <span className="text-[9px] text-slate-600 block italic leading-tight">
+                  Informativo · sem tag no calendário
+                </span>
               </div>
 
-              <div className="sm:col-span-2 space-y-1">
+              {/* Prazo de Entrega (Gera tag no calendário e dispara o cálculo de 5 dias úteis) */}
+              <div className="space-y-1 sm:col-span-2 md:col-span-1">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-bold text-blue-800">
-                    Data Prevista Entrega (Calendário)
+                  <label className="text-[11px] font-bold text-blue-900">
+                    Prazo de Entrega *
                   </label>
                   <div className="flex gap-1.5">
                     <button 
                       type="button" 
-                      onClick={() => setDataPrevistaEntrega(getPresetDate(3))} 
+                      onClick={() => handleDeliveryDateChange(getPresetDate(5))} 
                       className="text-[10px] text-blue-700 font-bold hover:underline"
                     >
-                      +3d
+                      +5d
                     </button>
                     <button 
                       type="button" 
-                      onClick={() => setDataPrevistaEntrega(getPresetDate(7))} 
+                      onClick={() => handleDeliveryDateChange(getPresetDate(7))} 
                       className="text-[10px] text-blue-700 font-bold hover:underline"
                     >
                       +7d
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => handleDeliveryDateChange(getPresetDate(10))} 
+                      className="text-[10px] text-blue-700 font-bold hover:underline"
+                    >
+                      +10d
                     </button>
                   </div>
                 </div>
                 <input
                   type="date"
                   value={dataPrevistaEntrega}
-                  onChange={(e) => setDataPrevistaEntrega(e.target.value)}
-                  className="w-full text-xs font-mono px-3 py-1.5 bg-blue-50/60 border border-blue-300 rounded-xl text-blue-950 font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  onChange={(e) => handleDeliveryDateChange(e.target.value)}
+                  className="w-full text-xs font-mono px-3 py-1.5 bg-blue-50/70 border border-blue-300 rounded-xl text-blue-950 font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
+                <span className="text-[9px] text-blue-600 block font-semibold leading-tight">
+                  Marcos no calendário unificado
+                </span>
+              </div>
+
+              {/* Início de Separação - AUTO PREENCHIDA COM 5 DIAS ÚTEIS ANTES DA ENTREGA */}
+              <div className="space-y-1 sm:col-span-2 md:col-span-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-indigo-900 flex items-center gap-1">
+                    <span>Início de Separação</span>
+                    <span className="px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-700 text-[9px] font-bold">
+                      Automático (-5 dias úteis)
+                    </span>
+                  </label>
+                  {dataPrevistaEntrega && (
+                    <button 
+                      type="button" 
+                      onClick={handleRecalculateSeparation} 
+                      className="text-[10px] text-indigo-600 font-bold hover:underline flex items-center gap-0.5"
+                      title="Recalcular 5 dias úteis antes da data de entrega"
+                    >
+                      ⚡ Recalcular (5d úteis)
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="date"
+                  value={dataInicioSeparacao}
+                  onChange={(e) => {
+                    setDataInicioSeparacao(e.target.value);
+                    setIsAutoSeparationActive(false);
+                  }}
+                  className="w-full text-xs font-mono px-3 py-1.5 bg-indigo-50/60 border border-indigo-300 rounded-xl text-indigo-950 font-bold focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                />
+                <div className="flex items-center justify-between text-[10px] text-indigo-700">
+                  <span>
+                    {dataInicioSeparacao && dataPrevistaEntrega
+                      ? `Inicia em ${formatShortDate(dataInicioSeparacao)} para entrega em ${formatShortDate(dataPrevistaEntrega)}`
+                      : 'Calculada automaticamente ao definir o prazo de entrega'}
+                  </span>
+                  {dataInicioSeparacao && (
+                    <span className="font-semibold text-[9px] text-slate-500">
+                      Dispara alerta se não iniciada
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
+
+            {/* Interactive Alert Control Preview */}
+            {dataPrevistaEntrega && dataInicioSeparacao && (
+              <div className="p-3 bg-gradient-to-r from-amber-50 to-indigo-50 rounded-xl border border-amber-200/80 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1 w-full">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-amber-900">
+                      Controle Interativo de Alerta de Separação
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-200/70 text-amber-900 font-bold">
+                      Regra: 5 Dias Úteis
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    A demanda deve ser iniciada até <strong className="text-indigo-900 font-mono">{formatShortDate(dataInicioSeparacao)}</strong>. Se não for iniciada com 5 dias úteis de antecedência do prazo de entrega (<strong className="text-blue-900 font-mono">{formatShortDate(dataPrevistaEntrega)}</strong>), o sistema emitirá alertas progressivos sinalizando risco de atraso na expedição!
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Row 5: Cronograma */}
