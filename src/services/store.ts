@@ -1064,6 +1064,8 @@ class AppStore {
       }
     }
 
+    const previousOrdersSnapshot = [...this.orders];
+
     // Prepend all new orders in a single fast operation, or clone array so React triggers re-render
     if (newOrdersToPrepend.length > 0) {
       this.orders = [...newOrdersToPrepend, ...this.orders];
@@ -1136,20 +1138,28 @@ class AppStore {
     }
 
     if (!isDbSuccess) {
+      // Revert in-memory orders so local state does not become desynced from the database
+      this.orders = previousOrdersSnapshot;
+      this.save(STORAGE_KEYS.ORDERS, this.orders);
+      idbSet(STORAGE_KEYS.ORDERS, this.orders).catch(() => {});
+
       record.status = 'NAO_CONCLUIDA';
       record.motivo_status = `Gravação no banco de dados NÃO foi concluída: ${dbErrorMsg}. Foram gravados ${actualSavedCount} de ${ordersToPersistInDatabase.length} pedidos.`;
       this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
       this.notify();
+      dbSync.saveImportRecord(record).catch(() => {});
       throw new Error(record.motivo_status);
     } else if (isDbPartial || record.status === 'PARCIAL') {
       record.status = 'PARCIAL';
       record.motivo_status = `Concluída parcialmente: ${actualSavedCount} pedidos gravados no banco de dados. ${record.erros > 0 ? `${record.erros} com erro na planilha.` : ''}`;
       this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
       this.notify();
+      dbSync.saveImportRecord(record).catch(() => {});
     } else {
       record.status = 'CONCLUIDA';
       this.save(STORAGE_KEYS.IMPORTS, this.importRecords);
       this.notify();
+      dbSync.saveImportRecord(record).catch(() => {});
     }
 
     this.notify();
@@ -1167,6 +1177,7 @@ class AppStore {
   }): ImportRecord {
     const now = new Date().toISOString();
     const importId = `imp-${Date.now()}`;
+    const isCancelled = params.status === 'CANCELADA';
     const record: ImportRecord = {
       id: importId,
       arquivo: params.fileName,
@@ -1175,8 +1186,8 @@ class AppStore {
       quantidade_registros: params.totalFound || 0,
       novos: 0,
       atualizados: 0,
-      sem_alteracao: 0,
-      erros: params.totalFound || 0,
+      sem_alteracao: isCancelled ? (params.totalFound || 0) : 0,
+      erros: isCancelled ? 0 : (params.totalFound || 0),
       status: params.status || 'NAO_CONCLUIDA',
       motivo_status: params.motivo,
       tempo_processamento_ms: params.duracaoMs,

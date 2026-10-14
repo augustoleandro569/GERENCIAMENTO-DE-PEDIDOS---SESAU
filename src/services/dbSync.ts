@@ -964,7 +964,10 @@ class DatabaseSyncService {
           atualizados: record.atualizados,
           sem_alteracao: record.sem_alteracao,
           erros: record.erros,
-        });
+          status: record.status || (record.erros > 0 && record.novos === 0 && record.atualizados === 0 ? 'NAO_CONCLUIDA' : 'CONCLUIDA'),
+          motivo_status: record.motivo_status || null,
+          tempo_processamento_ms: record.tempo_processamento_ms || null,
+        }, { onConflict: 'id' });
       } catch (err) {
         console.warn('Supabase import record upsert note:', err);
       }
@@ -1068,44 +1071,59 @@ class DatabaseSyncService {
         }
 
         // 1.2 Bulk Upsert Pedidos into Supabase
+        // 1.2 Bulk Upsert Pedidos into Supabase
         if (ordersToSave && ordersToSave.length > 0) {
-          const payload = ordersToSave.map(order => ({
-            id: order.id,
-            codigo: order.codigo,
-            origem: order.origem || 'IMPORTAÇÃO',
-            tipo: order.tipo,
-            solicitante: order.solicitante,
-            cpf: order.cpf,
-            programa: order.programa,
-            unidade: order.unidade,
-            quantidade_itens: order.quantidade_itens,
-            criado_em: order.criado_em,
-            status_origem: order.status_origem,
-            status_operacional: order.status_operacional,
-            validador: order.validador,
-            validada_em: order.validada_em,
-            separador: order.separador,
-            separado_em: order.separado_em,
-            conferente: order.conferente,
-            conferido_em: order.conferido_em,
-            expedidor: order.expedidor,
-            expedido_em: order.expedido_em,
-            entregador: order.entregador,
-            entregue_em: order.entregue_em,
-            historico_original: (order.historico_original || '').slice(0, 1500),
-            cronograma_id: order.cronograma_id ?? null,
-            cronograma_vinculo: order.cronograma_vinculo || 'NENHUM',
-            data_inicio: order.data_inicio ?? null,
-            data_solicitacao: order.data_solicitacao ?? null,
-            data_aprovacao: order.data_aprovacao ?? null,
-            data_inicio_separacao: order.data_inicio_separacao ?? null,
-            data_expedicao: order.data_expedicao ?? null,
-            data_prevista_entrega: order.data_prevista_entrega ?? null,
-            prioridade: order.prioridade || 'Normal',
-            observacoes: order.observacoes || null,
-            importacao_id: order.importacao_id || importRecord?.id || null,
-            atualizado_em: order.atualizado_em || new Date().toISOString(),
-          }));
+          // Pre-fetch valid schedule IDs to prevent foreign key constraint violations (fk_pedidos_cronograma)
+          let validScheduleIds = new Set<string>();
+          try {
+            const { data: validSchedules } = await supabase.from('cronogramas').select('id');
+            if (validSchedules) {
+              validScheduleIds = new Set(validSchedules.map((s: any) => s.id));
+            }
+          } catch (schErr) {
+            console.warn('Supabase cronogramas pre-check note:', schErr);
+          }
+
+          const payload = ordersToSave.map(order => {
+            const hasValidCronograma = Boolean(order.cronograma_id && validScheduleIds.has(order.cronograma_id));
+            return {
+              id: order.id,
+              codigo: order.codigo,
+              origem: order.origem || 'IMPORTAÇÃO',
+              tipo: order.tipo || 'Mensal',
+              solicitante: order.solicitante || 'Solicitante SESAU',
+              cpf: order.cpf || '—',
+              programa: order.programa || 'Hospitalar',
+              unidade: order.unidade || 'Não Informado',
+              quantidade_itens: Math.max(1, Number(order.quantidade_itens) || 1),
+              criado_em: order.criado_em || order.data_solicitacao || new Date().toISOString(),
+              status_origem: order.status_origem || order.status_operacional || 'Aguardando Validação',
+              status_operacional: order.status_operacional || order.status_origem || 'Aguardando Validação',
+              validador: order.validador || null,
+              validada_em: order.validada_em || null,
+              separador: order.separador || null,
+              separado_em: order.separado_em || null,
+              conferente: order.conferente || null,
+              conferido_em: order.conferido_em || null,
+              expedidor: order.expedidor || null,
+              expedido_em: order.expedido_em || null,
+              entregador: order.entregador || null,
+              entregue_em: order.entregue_em || null,
+              historico_original: (order.historico_original || '').slice(0, 1500),
+              cronograma_id: hasValidCronograma ? order.cronograma_id : null,
+              cronograma_vinculo: hasValidCronograma ? (order.cronograma_vinculo || 'AUTOMÁTICO') : 'NENHUM',
+              data_inicio: order.data_inicio ?? null,
+              data_solicitacao: order.data_solicitacao ?? null,
+              data_aprovacao: order.data_aprovacao ?? null,
+              data_inicio_separacao: order.data_inicio_separacao ?? null,
+              data_expedicao: order.data_expedicao ?? null,
+              data_prevista_entrega: order.data_prevista_entrega ?? null,
+              prioridade: order.prioridade || 'Normal',
+              observacoes: order.observacoes || null,
+              importacao_id: order.importacao_id || importRecord?.id || null,
+              atualizado_em: order.atualizado_em || new Date().toISOString(),
+            };
+          });
 
           const CHUNK_SIZE = 500;
           const totalChunks = Math.ceil(payload.length / CHUNK_SIZE);
@@ -1116,16 +1134,33 @@ class DatabaseSyncService {
             const chunk1 = payload.slice(i, i + CHUNK_SIZE);
             const chunk2 = payload.slice(i + CHUNK_SIZE, i + CHUNK_SIZE * 2);
 
-            // Upsert on 'codigo' so repeated imports update existing order records without duplicate key errors
+            // Resilient multi-tier upsert with automatic degradation to sub-chunks & single items
             const upsertChunk = async (chunk: any[]) => {
               if (chunk.length === 0) return { error: null, count: 0 };
               const { error } = await supabase.from('pedidos').upsert(chunk, { onConflict: 'codigo' });
-              if (error) {
-                // If onConflict 'codigo' fails (e.g. index missing), try onConflict 'id'
-                const fallback = await supabase.from('pedidos').upsert(chunk, { onConflict: 'id' });
-                return { error: fallback.error, count: fallback.error ? 0 : chunk.length };
+              if (!error) return { error: null, count: chunk.length };
+
+              // Fallback 1: try onConflict 'id'
+              const fallback = await supabase.from('pedidos').upsert(chunk, { onConflict: 'id' });
+              if (!fallback.error) return { error: null, count: chunk.length };
+
+              // Fallback 2: save in smaller batches of 50 to isolate any row issues
+              let subSaved = 0;
+              const SUB_SIZE = 50;
+              for (let s = 0; s < chunk.length; s += SUB_SIZE) {
+                const sub = chunk.slice(s, s + SUB_SIZE);
+                const { error: subErr } = await supabase.from('pedidos').upsert(sub, { onConflict: 'codigo' });
+                if (!subErr) {
+                  subSaved += sub.length;
+                } else {
+                  // Fallback 3: row-by-row salvaging
+                  for (const item of sub) {
+                    const { error: singleErr } = await supabase.from('pedidos').upsert([item], { onConflict: 'codigo' });
+                    if (!singleErr) subSaved++;
+                  }
+                }
               }
-              return { error: null, count: chunk.length };
+              return { error: null, count: subSaved };
             };
 
             const [res1, res2] = await Promise.all([
