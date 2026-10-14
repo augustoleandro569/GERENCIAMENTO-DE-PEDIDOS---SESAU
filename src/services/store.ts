@@ -190,6 +190,21 @@ class AppStore {
       (payload) => this.handleRemoteSchedulePayload(payload)
     );
 
+    // Setup active listeners and interval so changes made on other computers reflect immediately
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', () => {
+        this.syncRecentFromBackend();
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          this.syncRecentFromBackend();
+        }
+      });
+      setInterval(() => {
+        this.syncRecentFromBackend();
+      }, 10000);
+    }
+
     // 4. Immediately trigger strict backend fetch (Supabase)
     setTimeout(() => {
       this.loadBackendData();
@@ -275,9 +290,17 @@ class AppStore {
 
         this.orders = [...localNewOrders, ...backendOrders];
 
-        if (res.schedules) {
-          this.schedules = res.schedules;
+        // Merge schedules from database with INITIAL_SCHEDULES so no schedules are ever lost
+        const scheduleMap = new Map<string, Schedule>();
+        INITIAL_SCHEDULES.forEach(s => scheduleMap.set(s.id, s));
+        this.schedules.forEach(s => scheduleMap.set(s.id, s));
+        if (res.schedules && res.schedules.length > 0) {
+          res.schedules.forEach(s => scheduleMap.set(s.id, s));
         }
+        this.schedules = Array.from(scheduleMap.values());
+        // Guarantee all schedules exist in database table so foreign keys never fail
+        dbSync.ensureSchedulesExist(this.schedules);
+
         if (res.units && res.units.length > 0) {
           this.units = res.units;
         }
@@ -302,6 +325,68 @@ class AppStore {
     }
   }
 
+  // Incremental sync to bring recent edits made on other computers
+  public async syncRecentFromBackend(): Promise<void> {
+    try {
+      const { updatedOrders, updatedSchedules } = await dbSync.syncRecentChanges();
+      let hasChanged = false;
+
+      if (updatedOrders && updatedOrders.length > 0) {
+        for (const remote of updatedOrders) {
+          const idx = this.orders.findIndex(o => o.id === remote.id);
+          if (idx !== -1) {
+            const local = this.orders[idx];
+            if (
+              local.status_operacional !== remote.status_operacional ||
+              local.cronograma_id !== remote.cronograma_id ||
+              local.cronograma_vinculo !== remote.cronograma_vinculo ||
+              local.data_prevista_entrega !== remote.data_prevista_entrega ||
+              local.data_inicio_separacao !== remote.data_inicio_separacao ||
+              local.data_aprovacao !== remote.data_aprovacao ||
+              local.data_solicitacao !== remote.data_solicitacao ||
+              local.atualizado_em !== remote.atualizado_em
+            ) {
+              this.orders[idx] = {
+                ...local,
+                ...remote,
+                data_limite_aprovacao: remote.data_limite_aprovacao || remote.data_aprovacao || local.data_limite_aprovacao,
+                eventos: local.eventos && local.eventos.length > 0 ? local.eventos : remote.eventos,
+              };
+              hasChanged = true;
+            }
+          } else {
+            this.orders.unshift(remote);
+            hasChanged = true;
+          }
+        }
+      }
+
+      if (updatedSchedules && updatedSchedules.length > 0) {
+        const schMap = new Map<string, Schedule>();
+        this.schedules.forEach(s => schMap.set(s.id, s));
+        let schChanged = false;
+        updatedSchedules.forEach(s => {
+          if (!schMap.has(s.id) || JSON.stringify(schMap.get(s.id)) !== JSON.stringify(s)) {
+            schMap.set(s.id, s);
+            schChanged = true;
+          }
+        });
+        if (schChanged) {
+          this.schedules = Array.from(schMap.values());
+          this.save(STORAGE_KEYS.SCHEDULES, this.schedules);
+          hasChanged = true;
+        }
+      }
+
+      if (hasChanged) {
+        this.save(STORAGE_KEYS.ORDERS, this.orders);
+        this.notify();
+      }
+    } catch (e) {
+      console.warn('syncRecentFromBackend note:', e);
+    }
+  }
+
   // Handle live Postgres changes from Supabase
   private handleRemoteOrderPayload(payload: any) {
     if (!payload || !payload.eventType) return;
@@ -310,17 +395,32 @@ class AppStore {
     if (eventType === 'INSERT' && newRecord) {
       const exists = this.orders.some(o => o.id === newRecord.id);
       if (!exists) {
-        this.orders.unshift(newRecord as Order);
+        const mapped: Order = {
+          ...(newRecord as Order),
+          data_limite_aprovacao: newRecord.data_limite_aprovacao || newRecord.data_aprovacao || '',
+        };
+        this.orders.unshift(mapped);
         this.save(STORAGE_KEYS.ORDERS, this.orders);
         this.notify();
       }
     } else if (eventType === 'UPDATE' && newRecord) {
       const idx = this.orders.findIndex(o => o.id === newRecord.id);
+      const prevOrder = idx !== -1 ? this.orders[idx] : null;
+      const mappedOrder: Order = {
+        ...(prevOrder || {}),
+        ...newRecord,
+        data_limite_aprovacao: newRecord.data_limite_aprovacao || newRecord.data_aprovacao || prevOrder?.data_limite_aprovacao,
+        cronograma_id: newRecord.cronograma_id !== undefined ? (newRecord.cronograma_id || null) : (prevOrder?.cronograma_id || null),
+        cronograma_vinculo: newRecord.cronograma_vinculo || prevOrder?.cronograma_vinculo || 'NENHUM',
+        eventos: (prevOrder && prevOrder.eventos && prevOrder.eventos.length > 0) ? prevOrder.eventos : [],
+      };
       if (idx !== -1) {
-        this.orders[idx] = { ...this.orders[idx], ...(newRecord as Order) };
-        this.save(STORAGE_KEYS.ORDERS, this.orders);
-        this.notify();
+        this.orders[idx] = mappedOrder;
+      } else {
+        this.orders.unshift(mappedOrder);
       }
+      this.save(STORAGE_KEYS.ORDERS, this.orders);
+      this.notify();
     } else if (eventType === 'DELETE' && oldRecord) {
       this.orders = this.orders.filter(o => o.id !== oldRecord.id);
       this.save(STORAGE_KEYS.ORDERS, this.orders);

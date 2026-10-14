@@ -136,6 +136,7 @@ class DatabaseSyncService {
   private onRemoteOrderChange?: (payload: any) => void;
   private onRemoteScheduleChange?: (payload: any) => void;
   private firestoreUnsubs: (() => void)[] = [];
+  private lastIncrementalSyncTime: string = new Date(Date.now() - 30 * 60 * 1000).toISOString();
 
   private status: DatabaseStatus = {
     firestoreConnected: false,
@@ -798,10 +799,20 @@ class DatabaseSyncService {
         const { error: upsertErr } = await supabase.from('pedidos').upsert(payload, { onConflict: 'id' });
         if (upsertErr) {
           console.warn('Supabase order upsert note:', upsertErr.message);
-          // If foreign key constraint failed on cronograma_id, retry without cronograma_id to preserve all date/status updates
+          // If foreign key constraint failed on cronograma_id, NEVER delete the link!
+          // Ensure the schedule exists in cronogramas table first, then retry WITH the link preserved!
           if (upsertErr.code === '23503' && payload.cronograma_id) {
-            console.warn(`Retrying upsert for ${order.codigo} without missing cronograma_id...`);
-            payload.cronograma_id = null;
+            console.warn(`Ensuring missing schedule ${payload.cronograma_id} in database to satisfy foreign key...`);
+            await supabase.from('cronogramas').upsert({
+              id: payload.cronograma_id,
+              nome: `Cronograma ${payload.cronograma_id}`,
+              unidade: order.unidade || '',
+              programa: order.programa || 'Hospitalar',
+              tipo_pedido: order.tipo || 'Mensal',
+              data_entrega: order.data_prevista_entrega || null,
+              ativo: true,
+            }, { onConflict: 'id' });
+            // Retry upsert with cronograma_id intact!
             await supabase.from('pedidos').upsert(payload, { onConflict: 'id' });
           }
         }
@@ -868,7 +879,7 @@ class DatabaseSyncService {
           cronograma_vinculo: order.cronograma_vinculo || 'NENHUM',
           data_inicio: order.data_inicio ?? null,
           data_solicitacao: order.data_solicitacao ?? null,
-          data_aprovacao: order.data_aprovacao ?? null,
+          data_aprovacao: order.data_limite_aprovacao || order.data_aprovacao || null,
           data_inicio_separacao: order.data_inicio_separacao ?? null,
           data_expedicao: order.data_expedicao ?? null,
           data_prevista_entrega: order.data_prevista_entrega ?? null,
@@ -883,10 +894,19 @@ class DatabaseSyncService {
           const { error: chunkErr } = await supabase.from('pedidos').upsert(chunk, { onConflict: 'id' });
           if (chunkErr) {
             console.warn('Supabase bulk chunk upsert error:', chunkErr.message);
-            // If foreign key constraint failed on any item in chunk, retry with null cronograma_id
+            // If foreign key constraint failed on any item in chunk, NEVER wipe the link!
+            // Upsert any missing schedule IDs into cronogramas first, then retry WITH links preserved!
             if (chunkErr.code === '23503') {
-              const sanitizedChunk = chunk.map(c => ({ ...c, cronograma_id: null }));
-              await supabase.from('pedidos').upsert(sanitizedChunk, { onConflict: 'id' });
+              const missingSchIds = Array.from(new Set(chunk.map(c => c.cronograma_id).filter(Boolean)));
+              if (missingSchIds.length > 0) {
+                const stubs = missingSchIds.map(sid => ({
+                  id: sid,
+                  nome: `Cronograma ${sid}`,
+                  ativo: true,
+                }));
+                await supabase.from('cronogramas').upsert(stubs, { onConflict: 'id' });
+                await supabase.from('pedidos').upsert(chunk, { onConflict: 'id' });
+              }
             }
           }
         }
@@ -1351,6 +1371,136 @@ class DatabaseSyncService {
       await deleteDoc(doc(db, 'schedules', id));
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `schedules/${id}`);
+    }
+  }
+
+  // Ensure schedules exist in database to prevent foreign key errors on links
+  public async ensureSchedulesExist(schedules: Schedule[]): Promise<void> {
+    if (!schedules || schedules.length === 0) return;
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const payload = schedules.map(s => ({
+          id: s.id,
+          nome: s.nome,
+          competencia: s.competencia || 'OUT/26',
+          unidade: s.unidade || '',
+          programa: s.programa || 'Hospitalar',
+          tipo_pedido: s.tipo_pedido || 'Mensal',
+          data_limite_solicitacao: s.data_limite_solicitacao || null,
+          data_limite_aprovacao: s.data_limite_aprovacao || null,
+          data_separacao: s.data_separacao || null,
+          data_expedicao: s.data_expedicao || null,
+          data_entrega: s.data_entrega || null,
+          observacao: s.observacao || null,
+          ativo: s.ativo !== false,
+        }));
+        await supabase.from('cronogramas').upsert(payload, { onConflict: 'id' });
+      } catch (err) {
+        console.warn('Supabase ensureSchedulesExist note:', err);
+      }
+    }
+  }
+
+  // Incremental sync to pull changes made on other computers seamlessly
+  public async syncRecentChanges(sinceIso?: string): Promise<{
+    updatedOrders: Order[];
+    updatedSchedules: Schedule[];
+  }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { updatedOrders: [], updatedSchedules: [] };
+
+    try {
+      const fallbackSince = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const cutoff = sinceIso || this.lastIncrementalSyncTime || fallbackSince;
+
+      // 1. Fetch orders updated on other computers since cutoff
+      const { data: rawRecent, error: ordErr } = await supabase
+        .from('pedidos')
+        .select('*')
+        .gt('atualizado_em', cutoff)
+        .order('atualizado_em', { ascending: false })
+        .limit(300);
+
+      const updatedOrders: Order[] = [];
+      if (!ordErr && rawRecent && rawRecent.length > 0) {
+        for (const o of rawRecent) {
+          const code = (o.codigo || '').trim().toUpperCase();
+          if (!code.startsWith('SOL-2026-')) continue;
+          updatedOrders.push({
+            id: o.id,
+            codigo: o.codigo,
+            origem: o.origem || 'IMPORTAÇÃO',
+            tipo: o.tipo || 'Mensal',
+            solicitante: o.solicitante || 'Não Informado',
+            cpf: o.cpf || '',
+            programa: o.programa || 'Hospitalar',
+            unidade: o.unidade || '',
+            quantidade_itens: computeRealisticItemCount({
+              codigo: o.codigo,
+              tipo: o.tipo,
+              unidade: o.unidade,
+              programa: o.programa,
+              quantidade_itens: Number(o.quantidade_itens)
+            }),
+            criado_em: o.criado_em || '',
+            data_inicio: o.data_inicio || '',
+            data_solicitacao: o.data_solicitacao || '',
+            data_limite_aprovacao: o.data_limite_aprovacao || o.data_aprovacao || '',
+            data_aprovacao: o.data_aprovacao || '',
+            data_inicio_separacao: o.data_inicio_separacao || '',
+            data_expedicao: o.data_expedicao || '',
+            data_prevista_entrega: o.data_prevista_entrega || '',
+            status_origem: o.status_origem || o.status_operacional || 'Aguardando Aprovação',
+            status_operacional: o.status_operacional || 'Aguardando Aprovação',
+            validador: o.validador || undefined,
+            validada_em: o.validada_em || undefined,
+            separador: o.separador || undefined,
+            separado_em: o.separado_em || undefined,
+            conferente: o.conferente || undefined,
+            conferido_em: o.conferido_em || undefined,
+            expedidor: o.expedidor || undefined,
+            expedido_em: o.expedido_em || undefined,
+            entregador: o.entregador || undefined,
+            entregue_em: o.entregue_em || undefined,
+            historico_original: o.historico_original || '',
+            cronograma_id: o.cronograma_id || undefined,
+            cronograma_vinculo: o.cronograma_vinculo || 'NENHUM',
+            prioridade: o.prioridade || 'Normal',
+            observacoes: o.observacoes || undefined,
+            importacao_id: o.importacao_id || undefined,
+            criado_no_sistema_em: o.criado_no_sistema_em,
+            atualizado_em: o.atualizado_em,
+          });
+        }
+      }
+
+      // 2. Fetch all schedules
+      const { data: rawSchedules } = await supabase
+        .from('cronogramas')
+        .select('*');
+
+      const updatedSchedules: Schedule[] = (rawSchedules || []).map((s: any) => ({
+        id: s.id,
+        nome: s.nome,
+        competencia: s.competencia,
+        unidade: s.unidade,
+        programa: s.programa,
+        tipo_pedido: s.tipo_pedido,
+        data_limite_solicitacao: s.data_limite_solicitacao,
+        data_limite_aprovacao: s.data_limite_aprovacao,
+        data_separacao: s.data_separacao,
+        data_expedicao: s.data_expedicao,
+        data_entrega: s.data_entrega,
+        observacao: s.observacao,
+        ativo: s.ativo !== false,
+      }));
+
+      this.lastIncrementalSyncTime = new Date().toISOString();
+      return { updatedOrders, updatedSchedules };
+    } catch (e) {
+      console.warn('Incremental sync note:', e);
+      return { updatedOrders: [], updatedSchedules: [] };
     }
   }
 

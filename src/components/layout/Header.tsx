@@ -10,7 +10,9 @@ import {
   AlertCircle, 
   CheckCircle,
   FileSpreadsheet,
-  Plus
+  Plus,
+  RefreshCw,
+  Database
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -26,9 +28,16 @@ export const Header: React.FC<HeaderProps> = ({
   searchTerm,
   onSearchChange,
 }) => {
-  const { currentUser, setCurrentUser, orders } = useStore();
+  const { currentUser, setCurrentUser, orders, dbStatus, syncRecentFromBackend } = useStore();
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    await syncRecentFromBackend();
+    setTimeout(() => setIsSyncing(false), 800);
+  };
 
   // Calculate alerts
   const urgentOrders = orders.filter(o => o.tipo === 'Emergencial' && o.status_operacional !== 'Entregue');
@@ -74,6 +83,17 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Zone 3: Quick Actions, Notifications & User */}
       <div className="flex items-center gap-3">
+        {/* Live Database Sync Button */}
+        <button
+          onClick={handleManualSync}
+          disabled={isSyncing}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-all border border-emerald-200 active:scale-95 cursor-pointer shadow-2xs"
+          title="Sincronizar modificações diretamente do banco de dados em tempo real"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+          <span className="hidden md:inline">{isSyncing ? 'Sincronizando...' : 'Banco Conectado'}</span>
+        </button>
+
         <button
           onClick={onOpenImport}
           className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors border border-slate-200"

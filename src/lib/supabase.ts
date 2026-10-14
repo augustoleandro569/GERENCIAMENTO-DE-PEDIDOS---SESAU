@@ -317,6 +317,7 @@ END $$;
 
 -- Índices de Alta Performance para busca e ordenação rápida
 CREATE INDEX IF NOT EXISTS idx_pedidos_criado_no_sistema_em ON public.pedidos (criado_no_sistema_em DESC);
+CREATE INDEX IF NOT EXISTS idx_pedidos_atualizado_em ON public.pedidos (atualizado_em DESC);
 CREATE INDEX IF NOT EXISTS idx_pedidos_status_operacional ON public.pedidos (status_operacional);
 CREATE INDEX IF NOT EXISTS idx_pedidos_unidade ON public.pedidos (unidade);
 CREATE INDEX IF NOT EXISTS idx_eventos_pedidos_pedido_id ON public.eventos_pedidos (pedido_id);

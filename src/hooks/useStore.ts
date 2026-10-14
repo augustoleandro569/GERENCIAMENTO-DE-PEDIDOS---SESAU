@@ -52,6 +52,7 @@ export function useStore() {
     syncAllFromSupabase: store.syncAllFromSupabase.bind(store),
     unlinkOrdersOfDay: store.unlinkOrdersOfDay.bind(store),
     unlinkOrder: store.unlinkOrder.bind(store),
+    syncRecentFromBackend: store.syncRecentFromBackend.bind(store),
     cleanDatabase: store.cleanDatabase.bind(store),
     clearDatabaseWithPassword: store.clearDatabaseWithPassword.bind(store),
   };
