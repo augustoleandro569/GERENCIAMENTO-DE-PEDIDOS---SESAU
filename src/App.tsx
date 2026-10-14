@@ -16,6 +16,7 @@ import { ToastContainer, ToastMessage } from './components/common/Toast';
 import { Order } from './types';
 import { useStore } from './hooks/useStore';
 import { SesauLogo } from './components/common/Logo';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { 
   ClipboardList, 
   Calendar, 
@@ -43,9 +44,30 @@ import {
 type ActiveTab = 'login' | 'pedidos' | 'cronograma' | 'unidades' | 'dashboard' | 'importar';
 
 export default function App() {
-  // A primeira página ao entrar no sistema deve ser a de login
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<ActiveTab>('login');
+  // A primeira página ao entrar no sistema deve ser a de login caso não autenticado, preservando sessão ativa
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const sess = localStorage.getItem('sesau_auth_session');
+      if (sess) {
+        const parsed = JSON.parse(sess);
+        return parsed?.user === 'Admin569';
+      }
+    } catch (_) {}
+    return false;
+  });
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    try {
+      const sess = localStorage.getItem('sesau_auth_session');
+      if (sess) {
+        const parsed = JSON.parse(sess);
+        if (parsed?.user === 'Admin569') {
+          return 'pedidos';
+        }
+      }
+    } catch (_) {}
+    return 'login';
+  });
 
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isNewOrderOpen, setIsNewOrderOpen] = useState(false);
@@ -91,7 +113,21 @@ export default function App() {
   };
 
   const handleTabChange = (tabId: ActiveTab) => {
-    if (!isAuthenticated && tabId !== 'login') {
+    let auth = isAuthenticated;
+    if (!auth) {
+      try {
+        const sess = localStorage.getItem('sesau_auth_session');
+        if (sess) {
+          const parsed = JSON.parse(sess);
+          if (parsed?.user === 'Admin569') {
+            setIsAuthenticated(true);
+            auth = true;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (!auth && tabId !== 'login') {
       addToast('info', 'Acesso Restrito', 'Efetue login com o usuário Admin569 para acessar esta seção.');
       setActiveTab('login');
       return;
@@ -349,43 +385,55 @@ export default function App() {
 
       {/* Main Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-5">
-        {activeTab === 'login' && (
-          <LoginView
-            isAuthenticated={isAuthenticated}
-            currentUser={currentUser}
-            onLoginSuccess={handleLoginSuccess}
-            onLogout={handleLogout}
-            onNavigateToOrders={() => setActiveTab('pedidos')}
-          />
-        )}
+        <ErrorBoundary fallbackTitle="Inconformidade ao carregar visão">
+          {(!isAuthenticated || activeTab === 'login') && (
+            <LoginView
+              isAuthenticated={isAuthenticated}
+              currentUser={currentUser}
+              onLoginSuccess={handleLoginSuccess}
+              onLogout={handleLogout}
+              onNavigateToOrders={() => setActiveTab('pedidos')}
+            />
+          )}
 
-        {isAuthenticated && activeTab === 'pedidos' && (
-          <OrdersView
-            onSelectOrder={(ord) => setSelectedOrder(ord)}
-            onOpenNewOrder={() => setIsNewOrderOpen(true)}
-            onOpenImport={() => setActiveTab('importar')}
-            initialFilter={ordersFilterPreset}
-          />
-        )}
+          {isAuthenticated && activeTab === 'pedidos' && (
+            <ErrorBoundary fallbackTitle="Falha ao carregar lista de Pedidos">
+              <OrdersView
+                onSelectOrder={(ord) => setSelectedOrder(ord)}
+                onOpenNewOrder={() => setIsNewOrderOpen(true)}
+                onOpenImport={() => setActiveTab('importar')}
+                initialFilter={ordersFilterPreset}
+              />
+            </ErrorBoundary>
+          )}
 
-        {isAuthenticated && activeTab === 'cronograma' && (
-          <ScheduleView onSelectOrder={(ord) => setSelectedOrder(ord)} />
-        )}
+          {isAuthenticated && activeTab === 'cronograma' && (
+            <ErrorBoundary fallbackTitle="Falha ao carregar Cronograma Integrado">
+              <ScheduleView onSelectOrder={(ord) => setSelectedOrder(ord)} />
+            </ErrorBoundary>
+          )}
 
-        {isAuthenticated && activeTab === 'unidades' && (
-          <UnitsView />
-        )}
+          {isAuthenticated && activeTab === 'unidades' && (
+            <ErrorBoundary fallbackTitle="Falha ao carregar Unidades Hospitalares">
+              <UnitsView />
+            </ErrorBoundary>
+          )}
 
-        {isAuthenticated && activeTab === 'dashboard' && (
-          <DashboardView
-            onSelectOrder={(ord) => setSelectedOrder(ord)}
-            onNavigateToOrders={handleNavigateFromDashboard}
-          />
-        )}
+          {isAuthenticated && activeTab === 'dashboard' && (
+            <ErrorBoundary fallbackTitle="Falha ao carregar Painel Geral">
+              <DashboardView
+                onSelectOrder={(ord) => setSelectedOrder(ord)}
+                onNavigateToOrders={handleNavigateFromDashboard}
+              />
+            </ErrorBoundary>
+          )}
 
-        {isAuthenticated && activeTab === 'importar' && (
-          <ImportView />
-        )}
+          {isAuthenticated && activeTab === 'importar' && (
+            <ErrorBoundary fallbackTitle="Falha ao carregar Importação de Planilha">
+              <ImportView />
+            </ErrorBoundary>
+          )}
+        </ErrorBoundary>
       </main>
 
       {/* Slender Footer */}

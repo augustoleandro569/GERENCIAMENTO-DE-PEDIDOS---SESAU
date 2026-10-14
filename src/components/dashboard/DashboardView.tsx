@@ -109,7 +109,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
 
   // Filtered orders
   const filteredOrders = useMemo(() => {
-    return orders.filter(order => {
+    return (orders || []).filter(order => {
+      if (!order) return false;
       if (selectedUnit !== 'ALL' && order.unidade !== selectedUnit) return false;
       if (selectedProgram !== 'ALL' && order.programa !== selectedProgram) return false;
       if (selectedType !== 'ALL' && order.tipo !== selectedType) return false;
@@ -253,7 +254,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
     const pendenciasCriticas = atrasados + rejeitados + atencao;
 
     // Contagem de hospitais demandantes
-    const unidadesDemandantes = new Set(filteredOrders.map(o => o.unidade)).size;
+    const unidadesDemandantes = new Set(filteredOrders.map(o => o.unidade).filter(Boolean)).size;
 
     return {
       total: filteredOrders.length,
@@ -286,13 +287,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
       pedidosConcluidos,
       pedidosValidos,
     };
-  }, [filteredOrders, schedulesMap, settings.horas_alerta_atencao]);
+  }, [filteredOrders, schedulesMap, settings?.horas_alerta_atencao]);
 
   // Distribution by Program
   const programStats = useMemo(() => {
     const counts: Record<string, number> = {};
     filteredOrders.forEach(o => {
-      counts[o.programa] = (counts[o.programa] || 0) + 1;
+      const prog = o.programa || 'Outros';
+      counts[prog] = (counts[prog] || 0) + 1;
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [filteredOrders]);
@@ -301,7 +303,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
   const typeStats = useMemo(() => {
     const counts: Record<string, number> = {};
     filteredOrders.forEach(o => {
-      counts[o.tipo] = (counts[o.tipo] || 0) + 1;
+      const t = o.tipo || 'Mensal';
+      counts[t] = (counts[t] || 0) + 1;
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [filteredOrders]);
@@ -310,6 +313,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
   const topUnits = useMemo(() => {
     const counts: Record<string, number> = {};
     filteredOrders.forEach(o => {
+      if (!o || !o.unidade) return;
       counts[o.unidade] = (counts[o.unidade] || 0) + 1;
     });
     return Object.entries(counts)
@@ -411,7 +415,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onSelectOrder, onN
             <option value="ALL">Todas as Unidades ({units.length})</option>
             {units.map(u => (
               <option key={u.id} value={u.sigla}>
-                {u.sigla} - {u.nome.slice(0, 24)}
+                {u.sigla} - {String(u.nome || '').slice(0, 24)}
               </option>
             ))}
           </select>

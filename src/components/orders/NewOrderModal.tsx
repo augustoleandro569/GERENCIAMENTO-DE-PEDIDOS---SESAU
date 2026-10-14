@@ -51,7 +51,7 @@ export const NewOrderModal: React.FC<NewOrderModalProps> = ({ isOpen, onClose })
 
   const cleanCode = codigo.trim().toUpperCase();
   const isCodeStandard = cleanCode.startsWith('SOL-2026-') && cleanCode.length >= 10;
-  const isCodeDuplicate = orders.some(o => o.codigo.toUpperCase() === cleanCode);
+  const isCodeDuplicate = orders.some(o => o && o.codigo && o.codigo.toUpperCase() === cleanCode);
 
   const getPresetDate = (daysFromToday: number) => {
     const d = new Date();

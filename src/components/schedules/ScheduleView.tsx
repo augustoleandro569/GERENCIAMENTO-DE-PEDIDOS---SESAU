@@ -121,9 +121,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
   const [dateSortOrder, setDateSortOrder] = useState<'asc' | 'desc'>('asc');
   const [dateFilterPreset, setDateFilterPreset] = useState<ScheduleDateFilterPreset>('TODOS');
 
-  const handleOpenDayFromDate = (dateStr?: string | null, type?: string) => {
+  const handleOpenDayFromDate = (dateStr?: unknown, type?: string) => {
     if (!dateStr) return;
-    const clean = dateStr.trim();
+    const clean = String(dateStr).trim();
+    if (!clean) return;
     let day = 1;
     let month = 10;
     if (clean.includes('-')) {
@@ -333,21 +334,23 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
   // Lista filtrada e organizada por data para a aba "Por Progresso"
   const filteredScheduleProgressList = useMemo(() => {
     const list = scheduleProgressList.filter(({ sch }) => {
+      if (!sch) return false;
       if (selectedScheduleFilter !== 'ALL' && sch.id !== selectedScheduleFilter) return false;
       if (selectedCompetenciaFilter !== 'ALL' && sch.competencia !== selectedCompetenciaFilter) return false;
       if (searchScheduleTerm.trim()) {
         const q = searchScheduleTerm.toLowerCase().trim();
-        const matchesNome = sch.nome.toLowerCase().includes(q);
-        const matchesUnidade = sch.unidade.toLowerCase().includes(q);
-        const matchesProg = sch.programa.toLowerCase().includes(q);
+        const matchesNome = (sch.nome || '').toLowerCase().includes(q);
+        const matchesUnidade = (sch.unidade || '').toLowerCase().includes(q);
+        const matchesProg = (sch.programa || '').toLowerCase().includes(q);
         if (!matchesNome && !matchesUnidade && !matchesProg) return false;
       }
       if (filterUnits.length > 0) {
+        const uStr = String(sch.unidade || '');
         const schUnits = sch.unidades && sch.unidades.length > 0
           ? sch.unidades
-          : sch.unidade.includes(',')
-          ? sch.unidade.split(',').map((s: string) => s.trim())
-          : [sch.unidade];
+          : uStr.includes(',')
+          ? uStr.split(',').map((s: string) => s.trim())
+          : [uStr];
         if (!schUnits.some((u: string) => filterUnits.includes(u))) return false;
       }
       if (filterPrograms.length > 0 && !filterPrograms.includes(sch.programa)) return false;
@@ -374,21 +377,23 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
   // Lista filtrada e organizada por data para a aba "Tabela"
   const filteredSchedulesList = useMemo(() => {
     const list = schedules.filter(sch => {
+      if (!sch) return false;
       if (selectedScheduleFilter !== 'ALL' && sch.id !== selectedScheduleFilter) return false;
       if (selectedCompetenciaFilter !== 'ALL' && sch.competencia !== selectedCompetenciaFilter) return false;
       if (searchScheduleTerm.trim()) {
         const q = searchScheduleTerm.toLowerCase().trim();
-        const matchesNome = sch.nome.toLowerCase().includes(q);
-        const matchesUnidade = sch.unidade.toLowerCase().includes(q);
-        const matchesProg = sch.programa.toLowerCase().includes(q);
+        const matchesNome = (sch.nome || '').toLowerCase().includes(q);
+        const matchesUnidade = (sch.unidade || '').toLowerCase().includes(q);
+        const matchesProg = (sch.programa || '').toLowerCase().includes(q);
         if (!matchesNome && !matchesUnidade && !matchesProg) return false;
       }
       if (filterUnits.length > 0) {
+        const uStr = String(sch.unidade || '');
         const schUnits = sch.unidades && sch.unidades.length > 0
           ? sch.unidades
-          : sch.unidade.includes(',')
-          ? sch.unidade.split(',').map((s: string) => s.trim())
-          : [sch.unidade];
+          : uStr.includes(',')
+          ? uStr.split(',').map((s: string) => s.trim())
+          : [uStr];
         if (!schUnits.some((u: string) => filterUnits.includes(u))) return false;
       }
       if (filterPrograms.length > 0 && !filterPrograms.includes(sch.programa)) return false;
@@ -457,11 +462,12 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
     setIsTitleManual(true);
     setNome(sch.nome);
     setCompetencia(sch.competencia);
+    const uStr = String(sch.unidade || '');
     const uList = sch.unidades && sch.unidades.length > 0
       ? sch.unidades
-      : sch.unidade.includes(',')
-      ? sch.unidade.split(',').map(s => s.trim())
-      : [sch.unidade];
+      : uStr.includes(',')
+      ? uStr.split(',').map(s => s.trim())
+      : [uStr];
     setSelectedUnits(uList);
     setPrograma(sch.programa);
     setTipoPedido(sch.tipo_pedido);
@@ -1029,11 +1035,12 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onSelectOrder }) => 
                 else if (progressPercent >= 50) barColor = 'bg-purple-600';
                 else if (progressPercent >= 25) barColor = 'bg-amber-500';
 
+                const uStr = String(sch.unidade || '');
                 const unitsList = sch.unidades && sch.unidades.length > 0
                   ? sch.unidades
-                  : sch.unidade.includes(',')
-                  ? sch.unidade.split(',').map(s => s.trim())
-                  : [sch.unidade];
+                  : uStr.includes(',')
+                  ? uStr.split(',').map(s => s.trim())
+                  : [uStr];
 
                 return (
                   <div 

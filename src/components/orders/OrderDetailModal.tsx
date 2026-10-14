@@ -107,7 +107,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
       setDataInicioSeparacao(autoPick);
       showToast('success', 'Recalculado: 5 Dias Úteis', `Nova data de início da separação: ${formatShortDate(autoPick)}`);
     } else {
-      showToast('warning', 'Data de Entrega Necessária', 'Defina a data de entrega para calcular os 5 dias úteis.');
+      showToast('info', 'Data de Entrega Necessária', 'Defina a data de entrega para calcular os 5 dias úteis.');
     }
   };
 
@@ -131,15 +131,15 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ order, onClo
   const handleSaveDatesAndSchedule = () => {
     const isUnlinking = selectedScheduleId === 'NONE';
     const updates: Partial<Order> = {
-      cronograma_id: isUnlinking ? null : selectedScheduleId,
+      cronograma_id: isUnlinking ? undefined : selectedScheduleId,
       cronograma_vinculo: isUnlinking ? 'NENHUM' : 'MANUAL',
-      data_inicio: isUnlinking ? null : (dataInicio || null),
-      data_solicitacao: dataSolicitacao || null,
-      data_limite_aprovacao: dataLimiteAprovacao || null,
-      data_aprovacao: isUnlinking ? null : (dataAprovacao || null),
-      data_inicio_separacao: isUnlinking ? null : (dataInicioSeparacao || null),
-      data_expedicao: isUnlinking ? null : (dataExpedicao || null),
-      data_prevista_entrega: isUnlinking ? null : (dataPrevistaEntrega || null),
+      data_inicio: isUnlinking ? undefined : (dataInicio || undefined),
+      data_solicitacao: dataSolicitacao || undefined,
+      data_limite_aprovacao: dataLimiteAprovacao || undefined,
+      data_aprovacao: isUnlinking ? undefined : (dataAprovacao || undefined),
+      data_inicio_separacao: isUnlinking ? undefined : (dataInicioSeparacao || undefined),
+      data_expedicao: isUnlinking ? undefined : (dataExpedicao || undefined),
+      data_prevista_entrega: isUnlinking ? undefined : (dataPrevistaEntrega || undefined),
       validada_em: !isUnlinking && dataAprovacao ? `${dataAprovacao} 10:00` : (isUnlinking ? undefined : order.validada_em),
       separado_em: !isUnlinking && dataInicioSeparacao ? `${dataInicioSeparacao} 14:00` : (isUnlinking ? undefined : order.separado_em),
       expedido_em: !isUnlinking && dataExpedicao ? `${dataExpedicao} 16:00` : (isUnlinking ? undefined : order.expedido_em),

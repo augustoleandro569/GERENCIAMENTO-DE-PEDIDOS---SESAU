@@ -1099,7 +1099,11 @@ export function analyzeImport(
   durationMs?: number
 ): ImportAnalysis {
   const currentByCode = new Map<string, Order>();
-  currentOrders.forEach(o => currentByCode.set(o.codigo.toLowerCase().trim(), o));
+  (currentOrders || []).forEach(o => {
+    if (o && o.codigo) {
+      currentByCode.set(String(o.codigo).toLowerCase().trim(), o);
+    }
+  });
 
   let newCount = 0;
   let updateCount = 0;
@@ -1107,8 +1111,9 @@ export function analyzeImport(
   let errorCount = 0;
 
   const diffItems: ImportDiffItem[] = parsedRows.map(row => {
+    const rawCode = String(row.codigo || '').trim();
     // Strictly enforce SOL-2026 standard
-    if (!row.codigo || !row.codigo.toUpperCase().startsWith('SOL-2026-')) {
+    if (!rawCode || !rawCode.toUpperCase().startsWith('SOL-2026-')) {
       errorCount++;
       return {
         row,
@@ -1117,7 +1122,7 @@ export function analyzeImport(
       };
     }
 
-    const existing = currentByCode.get(row.codigo.toLowerCase().trim());
+    const existing = currentByCode.get(rawCode.toLowerCase());
 
     if (!existing) {
       newCount++;

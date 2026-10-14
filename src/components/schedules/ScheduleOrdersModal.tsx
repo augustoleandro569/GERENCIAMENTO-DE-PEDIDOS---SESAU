@@ -55,11 +55,12 @@ export const ScheduleOrdersModal: React.FC<ScheduleOrdersModalProps> = ({
 
   const unitsList = useMemo(() => {
     if (!schedule) return [];
+    const uStr = String(schedule.unidade || '');
     return schedule.unidades && schedule.unidades.length > 0
       ? schedule.unidades
-      : schedule.unidade.includes(',')
-      ? schedule.unidade.split(',').map(s => s.trim())
-      : [schedule.unidade];
+      : uStr.includes(',')
+      ? uStr.split(',').map(s => s.trim())
+      : [uStr];
   }, [schedule]);
 
   // All orders linked to this schedule
@@ -128,10 +129,11 @@ export const ScheduleOrdersModal: React.FC<ScheduleOrdersModalProps> = ({
       if (searchTerm) {
         const q = searchTerm.toLowerCase().trim();
         const o = item.order;
-        const matchesCode = o.codigo.toLowerCase().includes(q);
-        const matchesUnit = o.unidade.toLowerCase().includes(q);
-        const matchesRequester = o.solicitante.toLowerCase().includes(q);
-        if (!matchesCode && !matchesUnit && !matchesRequester) return false;
+        const matchesCode = (o.codigo || '').toLowerCase().includes(q);
+        const matchesUnit = (o.unidade || '').toLowerCase().includes(q);
+        const matchesRequester = (o.solicitante || '').toLowerCase().includes(q);
+        const matchesCpf = o.cpf ? String(o.cpf).toLowerCase().includes(q) : false;
+        if (!matchesCode && !matchesUnit && !matchesRequester && !matchesCpf) return false;
       }
       return true;
     });

@@ -247,10 +247,10 @@ export const ScheduleReportTab: React.FC<ScheduleReportTabProps> = ({ onSelectOr
     if (!searchTerm.trim()) return filteredOrders;
     const term = searchTerm.toLowerCase();
     return filteredOrders.filter(o =>
-      o.codigo.toLowerCase().includes(term) ||
-      o.unidade.toLowerCase().includes(term) ||
-      o.programa.toLowerCase().includes(term) ||
-      o.solicitante.toLowerCase().includes(term)
+      (o.codigo || '').toLowerCase().includes(term) ||
+      (o.unidade || '').toLowerCase().includes(term) ||
+      (o.programa || '').toLowerCase().includes(term) ||
+      (o.solicitante || '').toLowerCase().includes(term)
     );
   }, [filteredOrders, searchTerm]);
 

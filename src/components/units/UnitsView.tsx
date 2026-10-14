@@ -45,11 +45,39 @@ export const UnitsView: React.FC = () => {
   const [quickEditId, setQuickEditId] = useState<string | null>(null);
   const [quickEditName, setQuickEditName] = useState('');
 
-  const filteredUnits = units.filter(u => {
+  // Fast precomputed order count per unit name and sigla for high performance and zero crashes
+  const unitOrderCountMap = React.useMemo(() => {
+    const map = new Map<string, number>();
+    (orders || []).forEach(o => {
+      if (!o || !o.unidade) return;
+      const u = String(o.unidade).toUpperCase().trim();
+      map.set(u, (map.get(u) || 0) + 1);
+    });
+    return map;
+  }, [orders]);
+
+  const getUnitOrdersCount = React.useCallback((unit: HospitalUnit) => {
+    if (!unit) return 0;
+    const sig = String(unit.sigla || '').toUpperCase().trim();
+    const nom = String(unit.nome || '').toUpperCase().trim();
+    let total = 0;
+    unitOrderCountMap.forEach((count, key) => {
+      if (key === sig || key === nom || (sig && key.includes(sig)) || (nom && nom.includes(key))) {
+        total += count;
+      }
+    });
+    return total;
+  }, [unitOrderCountMap]);
+
+  const filteredUnits = (units || []).filter(u => {
+    if (!u) return false;
     if (filterType !== 'ALL' && u.tipo !== filterType) return false;
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
-      return u.sigla.toLowerCase().includes(q) || u.nome.toLowerCase().includes(q) || u.municipio.toLowerCase().includes(q);
+      const s = String(u.sigla || '').toLowerCase();
+      const n = String(u.nome || '').toLowerCase();
+      const m = String(u.municipio || '').toLowerCase();
+      return s.includes(q) || n.includes(q) || m.includes(q);
     }
     return true;
   });
@@ -267,13 +295,7 @@ export const UnitsView: React.FC = () => {
       {viewLayout === 'grid' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredUnits.map((unit) => {
-            const sig = (unit.sigla || '').toUpperCase();
-            const nom = (unit.nome || '').toUpperCase();
-            const unitOrdersCount = orders.filter(o => {
-              if (!o.unidade) return false;
-              const u = o.unidade.toUpperCase();
-              return u === sig || u === nom || u.includes(sig) || nom.includes(u);
-            }).length;
+            const unitOrdersCount = getUnitOrdersCount(unit);
             const isEditingThisName = quickEditId === unit.id;
 
             return (
@@ -420,13 +442,7 @@ export const UnitsView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredUnits.map((unit) => {
-                  const sig = (unit.sigla || '').toUpperCase();
-                  const nom = (unit.nome || '').toUpperCase();
-                  const unitOrdersCount = orders.filter(o => {
-                    if (!o.unidade) return false;
-                    const u = o.unidade.toUpperCase();
-                    return u === sig || u === nom || u.includes(sig) || nom.includes(u);
-                  }).length;
+                  const unitOrdersCount = getUnitOrdersCount(unit);
                   const isEditingThisName = quickEditId === unit.id;
 
                   return (
@@ -731,13 +747,7 @@ export const UnitsView: React.FC = () => {
 
               {/* Informação sobre pedidos vinculados */}
               {(() => {
-                const sig = (unitToDelete.sigla || '').toUpperCase();
-                const nom = (unitToDelete.nome || '').toUpperCase();
-                const linkedCount = orders.filter(o => {
-                  if (!o.unidade) return false;
-                  const u = o.unidade.toUpperCase();
-                  return u === sig || u === nom || u.includes(sig) || nom.includes(u);
-                }).length;
+                const linkedCount = getUnitOrdersCount(unitToDelete);
                 if (linkedCount > 0) {
                   return (
                     <div className="mt-3.5 p-3 bg-amber-50 border border-amber-200 rounded-xl text-left flex items-start gap-2.5">

@@ -843,8 +843,8 @@ class AppStore {
     // O(1) Fast lookup index by code to eliminate quadratic O(N^2) lag on 3,000+ orders
     const existingOrdersByCode = new Map<string, Order>();
     this.orders.forEach(o => {
-      if (o.codigo) {
-        existingOrdersByCode.set(o.codigo.toUpperCase(), o);
+      if (o && o.codigo) {
+        existingOrdersByCode.set(String(o.codigo).toUpperCase().trim(), o);
       }
     });
 

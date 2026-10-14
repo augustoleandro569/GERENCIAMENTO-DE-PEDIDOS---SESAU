@@ -35,7 +35,8 @@ import {
   CalendarDays,
   AlertTriangle,
   Flame,
-  CheckCircle2
+  CheckCircle2,
+  X
 } from 'lucide-react';
 
 interface OrdersViewProps {
@@ -53,7 +54,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onOpenImport,
   initialFilter,
 }) => {
-  const { orders, schedules, units, programs, orderTypes, currentUser, updateOperationalStatus, updateOrders, settings } = useStore();
+  const { orders, schedules, units, programs, orderTypes, currentUser, updateOperationalStatus, updateOrder, updateOrders, settings } = useStore();
 
   // View mode
   const [viewMode, setViewMode] = useState<'tabela' | 'kanban'>('tabela');
@@ -128,15 +129,16 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       counts[s.status] = 0;
     });
 
-    orders.forEach(o => {
+    (orders || []).forEach(o => {
+      if (!o) return;
       const st = o.status_operacional;
       if (st === 'Aprovado') {
         counts['Aprovada'] = (counts['Aprovada'] || 0) + 1;
       } else if (st === 'Cancelado') {
         counts['Cancelada'] = (counts['Cancelada'] || 0) + 1;
-      } else if (counts[st] !== undefined) {
+      } else if (st && counts[st] !== undefined) {
         counts[st]++;
-      } else {
+      } else if (st) {
         counts[st] = 1;
       }
     });
@@ -150,29 +152,31 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     let foraDoPrazo = 0;
     let emergencial = 0;
 
-    orders.forEach(o => {
+    (orders || []).forEach(o => {
+      if (!o) return;
       if (o.tipo === 'Emergencial' || o.tipo === 'Falta') emergencial++;
 
       const sch = o.cronograma_id ? schedulesMap.get(o.cronograma_id) : null;
-      const { situation } = calculateDeadlineSituation(o, sch, settings.horas_alerta_atencao);
+      const { situation } = calculateDeadlineSituation(o, sch, settings?.horas_alerta_atencao || 24);
       if (situation === 'Dentro do prazo' || situation === 'Concluído no prazo') noPrazo++;
       if (situation === 'Atrasado' || situation === 'Concluído com atraso') foraDoPrazo++;
     });
 
     return {
-      todos: orders.length,
+      todos: (orders || []).length,
       noPrazo,
       foraDoPrazo,
       emergencial,
     };
-  }, [orders, schedulesMap, settings.horas_alerta_atencao]);
+  }, [orders, schedulesMap, settings?.horas_alerta_atencao]);
 
   const [isAlertBannerVisible, setIsAlertBannerVisible] = useState(true);
 
   // Separation alert map (calculates 5-business-day picking deadline for every order)
   const separationAlertsMap = useMemo(() => {
     const map = new Map<string, ReturnType<typeof getSeparationAlertInfo>>();
-    orders.forEach(o => {
+    (orders || []).forEach(o => {
+      if (!o || !o.id) return;
       const sch = o.cronograma_id ? schedulesMap.get(o.cronograma_id) : null;
       map.set(o.id, getSeparationAlertInfo(o, sch));
     });
@@ -181,7 +185,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
   // Orders in Critical or Alert state (separation not started within 5 business days of delivery)
   const separationAlertOrders = useMemo(() => {
-    return orders.filter(o => {
+    return (orders || []).filter(o => {
+      if (!o || !o.id) return false;
       const alert = separationAlertsMap.get(o.id);
       return alert && (alert.severity === 'CRITICO' || alert.severity === 'ALERTA');
     });
@@ -220,21 +225,21 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
       // Search text
       if (searchTerm) {
         const query = searchTerm.toLowerCase().trim();
-        const matchesCode = order.codigo.toLowerCase().includes(query);
-        const matchesUnit = order.unidade.toLowerCase().includes(query);
-        const matchesRequester = order.solicitante.toLowerCase().includes(query);
-        const matchesCpf = order.cpf ? order.cpf.toLowerCase().includes(query) : false;
+        const matchesCode = (order.codigo || '').toLowerCase().includes(query);
+        const matchesUnit = (order.unidade || '').toLowerCase().includes(query);
+        const matchesRequester = (order.solicitante || '').toLowerCase().includes(query);
+        const matchesCpf = order.cpf ? String(order.cpf).toLowerCase().includes(query) : false;
         if (!matchesCode && !matchesUnit && !matchesRequester && !matchesCpf) return false;
       }
 
       // Multi-select Units
-      if (selectedUnits.length > 0 && !selectedUnits.includes(order.unidade)) return false;
+      if (selectedUnits.length > 0 && (!order.unidade || !selectedUnits.includes(order.unidade))) return false;
 
       // Multi-select Programs
-      if (selectedPrograms.length > 0 && !selectedPrograms.includes(order.programa)) return false;
+      if (selectedPrograms.length > 0 && (!order.programa || !selectedPrograms.includes(order.programa))) return false;
 
       // Multi-select Types
-      if (selectedTypes.length > 0 && !selectedTypes.includes(order.tipo)) return false;
+      if (selectedTypes.length > 0 && (!order.tipo || !selectedTypes.includes(order.tipo))) return false;
 
       // Multi-select Statuses: support both exact and gender aliases (Aprovada/Aprovado, Cancelada/Cancelado)
       if (selectedStatuses.length > 0) {
@@ -270,16 +275,16 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
       switch (sortField) {
         case 'codigo':
-          valA = a.codigo;
-          valB = b.codigo;
+          valA = a.codigo || '';
+          valB = b.codigo || '';
           break;
         case 'unidade':
-          valA = a.unidade;
-          valB = b.unidade;
+          valA = a.unidade || '';
+          valB = b.unidade || '';
           break;
         case 'itens':
-          valA = a.quantidade_itens || 0;
-          valB = b.quantidade_itens || 0;
+          valA = Number(a.quantidade_itens) || 0;
+          valB = Number(b.quantidade_itens) || 0;
           break;
         case 'criado_em':
           valA = a.criado_em || '';
@@ -295,8 +300,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
           break;
         }
         case 'status':
-          valA = a.status_operacional;
-          valB = b.status_operacional;
+          valA = a.status_operacional || '';
+          valB = b.status_operacional || '';
           break;
       }
 

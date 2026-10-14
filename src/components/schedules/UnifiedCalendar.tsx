@@ -135,9 +135,10 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
   }, [schedules]);
 
   // Helper to extract day number from date string matching current month (YYYY-MM-DD or DD/MM/YYYY)
-  const extractDayForMonth = (dateStr?: string | null): number | null => {
+  const extractDayForMonth = (dateStr?: unknown): number | null => {
     if (!dateStr) return null;
-    const clean = dateStr.trim();
+    const clean = String(dateStr).trim();
+    if (!clean) return null;
     if (clean.includes('-')) {
       const parts = clean.split('T')[0].split(' ')[0].split('-');
       if (parts.length >= 3) {
@@ -176,6 +177,7 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
 
   const filteredOrders = useMemo(() => {
     return orders.filter(o => {
+      if (!o) return false;
       // Pedidos desvinculados sem qualquer cronograma ou data ativa nunca pertencem ao calendário
       if (o.cronograma_vinculo === 'NENHUM' && !o.cronograma_id && !o.data_prevista_entrega && !o.data_inicio_separacao && !o.data_expedicao) {
         return false;
@@ -219,11 +221,12 @@ export const UnifiedCalendar: React.FC<UnifiedCalendarProps> = ({
     }
     if (selectedUnits.length > 0) {
       list = list.filter(s => {
+        const uStr = String(s.unidade || '');
         const schUnits = s.unidades && s.unidades.length > 0
           ? s.unidades
-          : s.unidade.includes(',')
-          ? s.unidade.split(',').map(u => u.trim())
-          : [s.unidade];
+          : uStr.includes(',')
+          ? uStr.split(',').map(u => u.trim())
+          : [uStr];
         return schUnits.some(u => selectedUnits.includes(u));
       });
     }

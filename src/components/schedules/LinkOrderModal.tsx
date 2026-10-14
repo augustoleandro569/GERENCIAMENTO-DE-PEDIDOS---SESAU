@@ -136,7 +136,7 @@ export const LinkOrderModal: React.FC<LinkOrderModalProps> = ({
         const matchesUnit = order.unidade?.toLowerCase().includes(q);
         const matchesRequester = order.solicitante?.toLowerCase().includes(q);
         const matchesProgram = order.programa?.toLowerCase().includes(q);
-        const matchesCpf = order.cpf ? order.cpf.toLowerCase().includes(q) : false;
+        const matchesCpf = order.cpf ? String(order.cpf).toLowerCase().includes(q) : false;
         if (!matchesCode && !matchesUnit && !matchesRequester && !matchesProgram && !matchesCpf) {
           return false;
         }

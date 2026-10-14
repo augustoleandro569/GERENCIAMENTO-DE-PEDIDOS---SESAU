@@ -1,10 +1,12 @@
 import { Order, Schedule, DeadlineSituation } from '../types';
 
-export function formatDate(dateStr?: string | null): string {
+export function formatDate(dateStr?: unknown): string {
   if (!dateStr) return '—';
   try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
+    const s = String(dateStr).trim();
+    if (!s) return '—';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return s;
     const day = String(d.getDate()).padStart(2, '0');
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const year = d.getFullYear();
@@ -12,34 +14,42 @@ export function formatDate(dateStr?: string | null): string {
     const minutes = String(d.getMinutes()).padStart(2, '0');
     
     // If it has time component
-    if (dateStr.includes('T') || dateStr.includes(':')) {
+    if (s.includes('T') || s.includes(':')) {
       return `${day}/${month}/${year} ${hours}:${minutes}`;
     }
     return `${day}/${month}/${year}`;
   } catch {
-    return dateStr;
+    return String(dateStr);
   }
 }
 
-export function formatShortDate(dateStr?: string | null): string {
+export function formatShortDate(dateStr?: unknown): string {
   if (!dateStr) return '—';
   try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
+    const s = String(dateStr).trim();
+    if (!s) return '—';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return s;
     const day = String(d.getDate()).padStart(2, '0');
     const month = String(d.getMonth() + 1).padStart(2, '0');
     return `${day}/${month}`;
   } catch {
-    return dateStr;
+    return String(dateStr);
   }
 }
 
-export function parseDateSafe(val?: string | null): Date | null {
+export function parseDateSafe(val?: unknown): Date | null {
   if (!val) return null;
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? null : val;
+  }
   
+  const str = String(val).trim();
+  if (!str) return null;
+
   // Format DD/MM/YYYY or DD/MM/YYYY HH:mm
-  if (/^\d{2}\/\d{2}\/\d{4}/.test(val)) {
-    const [datePart, timePart] = val.split(' ');
+  if (/^\d{2}\/\d{2}\/\d{4}/.test(str)) {
+    const [datePart, timePart] = str.split(' ');
     const [day, month, year] = datePart.split('/').map(Number);
     let hours = 0;
     let minutes = 0;
@@ -48,10 +58,11 @@ export function parseDateSafe(val?: string | null): Date | null {
       hours = h || 0;
       minutes = m || 0;
     }
-    return new Date(year, month - 1, day, hours, minutes);
+    const d = new Date(year, month - 1, day, hours, minutes);
+    return isNaN(d.getTime()) ? null : d;
   }
   
-  const d = new Date(val);
+  const d = new Date(str);
   return isNaN(d.getTime()) ? null : d;
 }
 
@@ -242,7 +253,10 @@ export function calculatePickingStartDate(deliveryDateStr?: string | null, busin
 /**
  * Counts business days (Monday-Friday) between two dates.
  */
-export function countBusinessDaysBetween(startDate: Date, endDate: Date): number {
+export function countBusinessDaysBetween(startDate?: Date | null, endDate?: Date | null): number {
+  if (!startDate || !endDate) return 0;
+  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return 0;
+
   const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 12, 0, 0);
   const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 12, 0, 0);
   
@@ -250,7 +264,10 @@ export function countBusinessDaysBetween(startDate: Date, endDate: Date): number
 
   let count = 0;
   const cur = new Date(start.getTime());
-  while (cur.getTime() < end.getTime()) {
+  let iterations = 0;
+  // Maximum loop guard to guarantee thread safety
+  while (cur.getTime() < end.getTime() && iterations < 366) {
+    iterations++;
     cur.setDate(cur.getDate() + 1);
     const dow = cur.getDay();
     if (dow !== 0 && dow !== 6) {
@@ -424,9 +441,19 @@ export function getSeparationAlertInfo(
   }
 
   const deliveryNorm = new Date(deliveryDateObj.getFullYear(), deliveryDateObj.getMonth(), deliveryDateObj.getDate(), 12, 0, 0);
-  const pickingNorm = pickingDateObj 
+  let pickingNorm = pickingDateObj 
     ? new Date(pickingDateObj.getFullYear(), pickingDateObj.getMonth(), pickingDateObj.getDate(), 12, 0, 0)
-    : new Date(calculatePickingStartDate(deliveryClean, 5) + 'T12:00:00');
+    : null;
+
+  if (!pickingNorm || isNaN(pickingNorm.getTime())) {
+    const calcDate = calculatePickingStartDate(deliveryClean, 5);
+    const parsedCalc = parseDateSafe(calcDate);
+    if (parsedCalc && !isNaN(parsedCalc.getTime())) {
+      pickingNorm = new Date(parsedCalc.getFullYear(), parsedCalc.getMonth(), parsedCalc.getDate(), 12, 0, 0);
+    } else {
+      pickingNorm = new Date(deliveryNorm.getTime() - 5 * 86400000);
+    }
+  }
 
   // Business days remaining until delivery
   const businessDaysRemaining = countBusinessDaysBetween(todayOnly, deliveryNorm);

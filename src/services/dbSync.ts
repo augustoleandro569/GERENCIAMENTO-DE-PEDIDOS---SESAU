@@ -1071,21 +1071,43 @@ class DatabaseSyncService {
         }
 
         // 1.2 Bulk Upsert Pedidos into Supabase
-        // 1.2 Bulk Upsert Pedidos into Supabase
         if (ordersToSave && ordersToSave.length > 0) {
-          // Pre-fetch valid schedule IDs to prevent foreign key constraint violations (fk_pedidos_cronograma)
+          // Pre-fetch valid schedule IDs and import IDs to prevent foreign key constraint violations
+          // (fk_pedidos_cronograma and fk_pedidos_importacoes)
           let validScheduleIds = new Set<string>();
-          try {
-            const { data: validSchedules } = await supabase.from('cronogramas').select('id');
-            if (validSchedules) {
-              validScheduleIds = new Set(validSchedules.map((s: any) => s.id));
-            }
-          } catch (schErr) {
-            console.warn('Supabase cronogramas pre-check note:', schErr);
+          let validImportIds = new Set<string>();
+          if (importRecord?.id) {
+            validImportIds.add(importRecord.id);
           }
+
+          try {
+            const [schRes, impRes] = await Promise.all([
+              supabase.from('cronogramas').select('id'),
+              supabase.from('importacoes').select('id')
+            ]);
+            if (schRes.data) {
+              validScheduleIds = new Set(schRes.data.map((s: any) => s.id));
+            }
+            if (impRes.data) {
+              impRes.data.forEach((i: any) => validImportIds.add(i.id));
+            }
+          } catch (preErr) {
+            console.warn('Supabase pre-check foreign keys note:', preErr);
+          }
+
+          const cleanDate = (val?: unknown): string | null => {
+            if (!val) return null;
+            const s = String(val).trim();
+            return s.length > 0 ? s : null;
+          };
 
           const payload = ordersToSave.map(order => {
             const hasValidCronograma = Boolean(order.cronograma_id && validScheduleIds.has(order.cronograma_id));
+            const hasValidImportId = Boolean(order.importacao_id && validImportIds.has(order.importacao_id));
+            const finalImportId = hasValidImportId
+              ? order.importacao_id
+              : (importRecord?.id && validImportIds.has(importRecord.id) ? importRecord.id : null);
+
             return {
               id: order.id,
               codigo: order.codigo,
@@ -1100,27 +1122,27 @@ class DatabaseSyncService {
               status_origem: order.status_origem || order.status_operacional || 'Aguardando Validação',
               status_operacional: order.status_operacional || order.status_origem || 'Aguardando Validação',
               validador: order.validador || null,
-              validada_em: order.validada_em || null,
+              validada_em: cleanDate(order.validada_em),
               separador: order.separador || null,
-              separado_em: order.separado_em || null,
+              separado_em: cleanDate(order.separado_em),
               conferente: order.conferente || null,
-              conferido_em: order.conferido_em || null,
+              conferido_em: cleanDate(order.conferido_em),
               expedidor: order.expedidor || null,
-              expedido_em: order.expedido_em || null,
+              expedido_em: cleanDate(order.expedido_em),
               entregador: order.entregador || null,
-              entregue_em: order.entregue_em || null,
+              entregue_em: cleanDate(order.entregue_em),
               historico_original: (order.historico_original || '').slice(0, 1500),
               cronograma_id: hasValidCronograma ? order.cronograma_id : null,
               cronograma_vinculo: hasValidCronograma ? (order.cronograma_vinculo || 'AUTOMÁTICO') : 'NENHUM',
-              data_inicio: order.data_inicio ?? null,
-              data_solicitacao: order.data_solicitacao ?? null,
-              data_aprovacao: order.data_aprovacao ?? null,
-              data_inicio_separacao: order.data_inicio_separacao ?? null,
-              data_expedicao: order.data_expedicao ?? null,
-              data_prevista_entrega: order.data_prevista_entrega ?? null,
+              data_inicio: cleanDate(order.data_inicio),
+              data_solicitacao: cleanDate(order.data_solicitacao),
+              data_aprovacao: cleanDate(order.data_aprovacao),
+              data_inicio_separacao: cleanDate(order.data_inicio_separacao),
+              data_expedicao: cleanDate(order.data_expedicao),
+              data_prevista_entrega: cleanDate(order.data_prevista_entrega),
               prioridade: order.prioridade || 'Normal',
               observacoes: order.observacoes || null,
-              importacao_id: order.importacao_id || importRecord?.id || null,
+              importacao_id: finalImportId,
               atualizado_em: order.atualizado_em || new Date().toISOString(),
             };
           });
@@ -1135,7 +1157,7 @@ class DatabaseSyncService {
             const chunk2 = payload.slice(i + CHUNK_SIZE, i + CHUNK_SIZE * 2);
 
             // Resilient multi-tier upsert with automatic degradation to sub-chunks & single items
-            const upsertChunk = async (chunk: any[]) => {
+            const upsertChunk = async (chunk: any[]): Promise<{ error: any; count: number }> => {
               if (chunk.length === 0) return { error: null, count: 0 };
               const { error } = await supabase.from('pedidos').upsert(chunk, { onConflict: 'codigo' });
               if (!error) return { error: null, count: chunk.length };
@@ -1146,6 +1168,7 @@ class DatabaseSyncService {
 
               // Fallback 2: save in smaller batches of 50 to isolate any row issues
               let subSaved = 0;
+              let lastErr: any = fallback.error;
               const SUB_SIZE = 50;
               for (let s = 0; s < chunk.length; s += SUB_SIZE) {
                 const sub = chunk.slice(s, s + SUB_SIZE);
@@ -1153,14 +1176,19 @@ class DatabaseSyncService {
                 if (!subErr) {
                   subSaved += sub.length;
                 } else {
+                  lastErr = subErr;
                   // Fallback 3: row-by-row salvaging
                   for (const item of sub) {
                     const { error: singleErr } = await supabase.from('pedidos').upsert([item], { onConflict: 'codigo' });
-                    if (!singleErr) subSaved++;
+                    if (!singleErr) {
+                      subSaved++;
+                    } else {
+                      lastErr = singleErr;
+                    }
                   }
                 }
               }
-              return { error: null, count: subSaved };
+              return { error: subSaved === chunk.length ? null : lastErr, count: subSaved };
             };
 
             const [res1, res2] = await Promise.all([
